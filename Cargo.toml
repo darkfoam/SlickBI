@@ -15,8 +15,13 @@ slickbi-model = { path = "crates/model" }
 slickbi-planner = { path = "crates/planner" }
 slickbi-engine = { path = "crates/engine" }
 slickbi-workbook = { path = "crates/workbook" }
+slickbi-scene = { path = "crates/scene" }
+slickbi-render = { path = "crates/render" }
 duckdb = { version = "~1.20001.0", features = ["bundled", "json", "parquet"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
+arrow = "60"
+tiny-skia = "0.11"
+ab_glyph = "0.2"
 schemars = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -1,0 +1,13 @@
+[package]
+name = "slickbi-scene"
+description = "SlickBI scene builder: scales, axes and mark geometry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+slickbi-planner.workspace = true
+slickbi-spec.workspace = true
+arrow.workspace = true
+thiserror.workspace = true
