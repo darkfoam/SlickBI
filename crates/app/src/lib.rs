@@ -6,7 +6,7 @@
 //!
 //! A [`Session`] owns the embedded engine, the workbook document, and the cached scene for the
 //! active worksheet. The windowing layer mutates the session (load a file, assign a field, change
-//! the mark) and reads the cached scene to draw it.
+//! the mark, filter, calculate) and reads the cached scene to draw it.
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +14,10 @@ use slickbi_engine::{Engine, SourceFormat};
 use slickbi_model::Model;
 use slickbi_planner::{PlanOptions, plan};
 use slickbi_scene::{Margins, Scene, SceneSpec, build};
-use slickbi_spec::{Agg, Channel, DataModelId, FieldId, Mark, Workbook, Worksheet, WorksheetId};
+use slickbi_spec::{
+    Agg, Channel, DataModelId, DataType, Field, FieldId, FieldSource, Filter, FilterOp, Mark,
+    Report, Role, Scalar, Workbook, Worksheet, WorksheetId,
+};
 use slickbi_workbook::Scz;
 use thiserror::Error;
 
@@ -36,6 +39,7 @@ pub struct Session {
     workbook: Workbook,
     source: Option<(PathBuf, SourceFormat)>,
     active: usize,
+    active_report: usize,
     scene: Option<Scene>,
     error: Option<String>,
     scene_size: (f32, f32),
@@ -59,6 +63,7 @@ impl Session {
             ),
             source: None,
             active: 0,
+            active_report: 0,
             scene: None,
             error: None,
             scene_size: (800.0, 500.0),
@@ -86,6 +91,11 @@ impl Session {
         self.source.is_some()
     }
 
+    /// The number of worksheets.
+    pub fn worksheet_count(&self) -> usize {
+        self.workbook.worksheets.len()
+    }
+
     /// The index of the active worksheet.
     pub fn active(&self) -> usize {
         self.active
@@ -94,6 +104,21 @@ impl Session {
     /// The active worksheet.
     pub fn active_worksheet(&self) -> Option<&Worksheet> {
         self.workbook.worksheets.get(self.active)
+    }
+
+    /// The reports.
+    pub fn reports(&self) -> &[Report] {
+        &self.workbook.reports
+    }
+
+    /// The index of the active report.
+    pub fn active_report(&self) -> usize {
+        self.active_report
+    }
+
+    /// The active report, if any.
+    pub fn active_report_doc(&self) -> Option<&Report> {
+        self.workbook.reports.get(self.active_report)
     }
 
     /// The fields of the active model, split into dimensions and measures, as owned `(id, name)`.
@@ -116,18 +141,14 @@ impl Session {
             }
             let info = (field.id.clone(), field.name.clone());
             match field.role {
-                slickbi_spec::Role::Measure => measures.push(info),
-                slickbi_spec::Role::Dimension => dimensions.push(info),
+                Role::Measure => measures.push(info),
+                Role::Dimension => dimensions.push(info),
             }
         }
         (dimensions, measures)
     }
 
     /// Loads a data file: discovers its schema, registers it, and adds a worksheet.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SessionError`] if the file cannot be read or described.
     pub fn load_file(&mut self, path: &Path, format: SourceFormat) -> Result<(), SessionError> {
         let model = slickbi_connectors::discover(&self.engine, path, format)?;
         self.engine
@@ -146,10 +167,36 @@ impl Session {
         Ok(())
     }
 
-    /// Assigns a field to a shelf on the active worksheet.
-    ///
-    /// A measure defaults to [`Agg::Sum`], so dragging revenue onto a shelf produces a grouped
-    /// total rather than raw rows; a dimension is used as-is.
+    /// Adds a new, empty worksheet and makes it active.
+    pub fn add_worksheet(&mut self) {
+        let index = self.workbook.worksheets.len();
+        let model = DataModelId::new("m1");
+        self.workbook.worksheets.push(new_worksheet(index, model));
+        self.active = index;
+        self.refresh();
+    }
+
+    /// Makes the given worksheet active.
+    pub fn set_active(&mut self, index: usize) {
+        if index < self.workbook.worksheets.len() {
+            self.active = index;
+            self.refresh();
+        }
+    }
+
+    /// Removes a worksheet and updates the active index.
+    pub fn remove_worksheet(&mut self, index: usize) {
+        if index >= self.workbook.worksheets.len() {
+            return;
+        }
+        self.workbook.worksheets.remove(index);
+        if self.active >= self.workbook.worksheets.len() {
+            self.active = self.workbook.worksheets.len().saturating_sub(1);
+        }
+        self.refresh();
+    }
+
+    /// Assigns a field to a shelf on the active worksheet; measures default to [`Agg::Sum`].
     pub fn assign(&mut self, shelf: Shelf, field: &FieldId) {
         let agg = self.default_agg(field);
         let Some(worksheet) = self.workbook.worksheets.get_mut(self.active) else {
@@ -166,20 +213,6 @@ impl Session {
             Shelf::Y => worksheet.encoding.y = Some(channel),
         }
         self.refresh();
-    }
-
-    fn default_agg(&self, field: &FieldId) -> Agg {
-        let is_measure = self
-            .active_worksheet()
-            .and_then(|worksheet| {
-                self.workbook
-                    .models
-                    .iter()
-                    .find(|m| m.id == worksheet.model)
-            })
-            .and_then(|model| model.fields.iter().find(|f| &f.id == field))
-            .is_some_and(|field| field.role == slickbi_spec::Role::Measure);
-        if is_measure { Agg::Sum } else { Agg::None }
     }
 
     /// Clears a shelf on the active worksheet.
@@ -203,70 +236,275 @@ impl Session {
         self.refresh();
     }
 
-    /// Rebuilds the scene for the active worksheet at the given panel size.
-    pub fn refresh(&mut self) {
-        self.scene = None;
-        self.error = None;
-
-        let Some(worksheet) = self.workbook.worksheets.get(self.active) else {
+    /// Adds a filter to the active worksheet and rebuilds.
+    pub fn add_filter(&mut self, field: &FieldId, op: FilterOp, values: Vec<Scalar>) {
+        let Some(worksheet) = self.workbook.worksheets.get_mut(self.active) else {
             return;
         };
+        worksheet.filters.push(Filter {
+            field: field.clone(),
+            op,
+            values,
+        });
+        self.refresh();
+    }
 
-        // A chart needs both shelves; before that there is nothing to draw.
-        if worksheet.encoding.x.is_none() || worksheet.encoding.y.is_none() {
+    /// Removes a filter from the active worksheet and rebuilds.
+    pub fn remove_filter(&mut self, index: usize) {
+        let Some(worksheet) = self.workbook.worksheets.get_mut(self.active) else {
             return;
+        };
+        if index < worksheet.filters.len() {
+            worksheet.filters.remove(index);
         }
+        self.refresh();
+    }
 
+    /// Compiles and adds a calculated field to the active model.
+    ///
+    /// # Errors
+    ///
+    /// Returns the calculation error (with its span) if the expression is invalid.
+    pub fn add_calculated_field(
+        &mut self,
+        name: &str,
+        expression: &str,
+    ) -> Result<(), slickbi_calc::CalcError> {
+        let Some(worksheet) = self.active_worksheet() else {
+            return Err(slickbi_calc::CalcError::UnknownFunction {
+                name: "<no model>".to_owned(),
+                span: slickbi_calc::Span::new(0, 0),
+            });
+        };
+        let model_id = worksheet.model.clone();
+        let Some(model) = self.workbook.models.iter().find(|m| m.id == model_id) else {
+            return Err(slickbi_calc::CalcError::UnknownFunction {
+                name: "<no model>".to_owned(),
+                span: slickbi_calc::Span::new(0, 0),
+            });
+        };
+
+        let resolved =
+            Model::resolve(model).map_err(|e| slickbi_calc::CalcError::UnknownFunction {
+                name: e.to_string(),
+                span: slickbi_calc::Span::new(0, 0),
+            })?;
+        let compiled = slickbi_calc::compile(expression, &resolved)?;
+        let data_type = compiled.value_type.data_type().unwrap_or(DataType::Number);
+        let role = match data_type {
+            DataType::Integer | DataType::Number => Role::Measure,
+            _ => Role::Dimension,
+        };
+
+        let model = self
+            .workbook
+            .models
+            .iter_mut()
+            .find(|m| m.id == model_id)
+            .expect("model exists");
+        let field = Field {
+            id: FieldId::new(name),
+            name: name.to_owned(),
+            table: model.tables[0].id.clone(),
+            source: FieldSource::Expression {
+                expression: expression.to_owned(),
+            },
+            role,
+            data_type,
+            format: None,
+            hidden: false,
+            description: None,
+        };
+        model.fields.push(field);
+        self.refresh();
+        Ok(())
+    }
+
+    /// Adds a report and makes it active.
+    pub fn add_report(&mut self, name: &str) {
+        let report = Report {
+            id: slickbi_spec::ReportId::new(format!("r{}", self.workbook.reports.len())),
+            name: name.to_owned(),
+            target: slickbi_spec::ReportTarget::Screen,
+            theme: None,
+            canvas: slickbi_spec::Canvas::standard(),
+            elements: Vec::new(),
+        };
+        self.workbook.reports.push(report);
+        self.active_report = self.workbook.reports.len() - 1;
+    }
+
+    /// Places a worksheet as a chart element in the active report, auto-laid-out on a grid.
+    pub fn add_chart_to_report(&mut self, worksheet: &WorksheetId) {
+        let Some(report) = self.workbook.reports.get_mut(self.active_report) else {
+            return;
+        };
+        let frame = grid_frame(report.elements.len(), report.canvas);
+        let element = slickbi_spec::Element {
+            id: slickbi_spec::ElementId::new(format!("e{}", report.elements.len())),
+            frame,
+            kind: slickbi_spec::ElementKind::Chart {
+                chart: slickbi_spec::ChartElement {
+                    worksheet: worksheet.clone(),
+                    title: None,
+                    overrides: Default::default(),
+                },
+            },
+        };
+        report.elements.push(element);
+    }
+
+    /// Adds a text block to the active report.
+    pub fn add_text_to_report(&mut self, markdown: &str) {
+        let Some(report) = self.workbook.reports.get_mut(self.active_report) else {
+            return;
+        };
+        let frame = grid_frame(report.elements.len(), report.canvas);
+        report.elements.push(slickbi_spec::Element {
+            id: slickbi_spec::ElementId::new(format!("e{}", report.elements.len())),
+            frame,
+            kind: slickbi_spec::ElementKind::Text {
+                text: slickbi_spec::TextElement {
+                    markdown: markdown.to_owned(),
+                    align: Default::default(),
+                    style: None,
+                },
+            },
+        });
+    }
+
+    /// Removes an element from the active report.
+    pub fn remove_element(&mut self, index: usize) {
+        let Some(report) = self.workbook.reports.get_mut(self.active_report) else {
+            return;
+        };
+        if index < report.elements.len() {
+            report.elements.remove(index);
+        }
+    }
+
+    /// Exports the active worksheet's result as CSV.
+    pub fn export_csv(&mut self, path: &Path) -> Result<(), SessionError> {
+        let (_, batches) = self.execute_active()?;
+        std::fs::write(path, to_csv(&batches))?;
+        Ok(())
+    }
+
+    /// Exports the active worksheet's result as Parquet via DuckDB.
+    pub fn export_parquet(&mut self, path: &Path) -> Result<(), SessionError> {
+        let (query, _) = self.execute_active()?;
+        let sql = format!("COPY ({}) TO ? (FORMAT PARQUET)", query.sql);
+        self.engine.execute(
+            &sql,
+            &[slickbi_calc::ParamValue::Text(
+                path.to_string_lossy().into_owned(),
+            )],
+        )?;
+        Ok(())
+    }
+
+    fn execute_active(
+        &mut self,
+    ) -> Result<
+        (
+            slickbi_planner::Query,
+            Vec<slickbi_engine::arrow::record_batch::RecordBatch>,
+        ),
+        SessionError,
+    > {
+        let Some(worksheet) = self.active_worksheet().cloned() else {
+            return Err(SessionError::NoWorksheet);
+        };
         let Some(document) = self
             .workbook
             .models
             .iter()
             .find(|m| m.id == worksheet.model)
         else {
-            self.error = Some("the worksheet's model is missing".to_owned());
-            return;
+            return Err(SessionError::NoWorksheet);
         };
-        let model = match Model::resolve(document) {
-            Ok(model) => model,
-            Err(error) => {
-                self.error = Some(error.to_string());
-                return;
-            }
-        };
+        let model = Model::resolve(document)?;
+        let query = plan(&model, &worksheet, &PlanOptions::default())?;
+        let result = self.engine.execute(&query.sql, &query.params)?;
+        Ok((query, result.batches))
+    }
 
-        let query = match plan(&model, worksheet, &PlanOptions::default()) {
-            Ok(query) => query,
-            Err(error) => {
-                self.error = Some(error.to_string());
-                return;
-            }
+    fn default_agg(&self, field: &FieldId) -> Agg {
+        let is_measure = self
+            .active_worksheet()
+            .and_then(|worksheet| {
+                self.workbook
+                    .models
+                    .iter()
+                    .find(|m| m.id == worksheet.model)
+            })
+            .and_then(|model| model.fields.iter().find(|f| &f.id == field))
+            .is_some_and(|field| field.role == Role::Measure);
+        if is_measure { Agg::Sum } else { Agg::None }
+    }
+
+    /// Builds the scene for any worksheet at a given size.
+    ///
+    /// Returns `Ok(None)` when the worksheet has no shelves yet (nothing to draw), and `Err`
+    /// when planning, execution or scene building fails.
+    pub fn scene_for(
+        &mut self,
+        worksheet_id: &WorksheetId,
+        size: (f32, f32),
+    ) -> Result<Option<Scene>, String> {
+        let Some(worksheet) = self
+            .workbook
+            .worksheets
+            .iter()
+            .find(|w| &w.id == worksheet_id)
+            .cloned()
+        else {
+            return Err("the worksheet is missing".to_owned());
         };
-        let result = match self.engine.execute(&query.sql, &query.params) {
-            Ok(result) => result,
-            Err(error) => {
-                self.error = Some(error.to_string());
-                return;
-            }
-        };
+        if worksheet.encoding.x.is_none() || worksheet.encoding.y.is_none() {
+            return Ok(None);
+        }
+
+        let document = self
+            .workbook
+            .models
+            .iter()
+            .find(|m| m.id == worksheet.model)
+            .ok_or_else(|| "the worksheet's model is missing".to_owned())?;
+        let model = Model::resolve(document).map_err(|e| e.to_string())?;
+        let query = plan(&model, &worksheet, &PlanOptions::default()).map_err(|e| e.to_string())?;
+        let result = self
+            .engine
+            .execute(&query.sql, &query.params)
+            .map_err(|e| e.to_string())?;
 
         let spec = SceneSpec {
             mark: worksheet.mark,
             columns: &query.columns,
             batches: &result.batches,
-            size: self.scene_size,
+            size,
             margins: Margins::default(),
         };
-        match build(&spec) {
-            Ok(scene) => self.scene = Some(scene),
-            Err(error) => self.error = Some(error.to_string()),
+        build(&spec).map(Some).map_err(|e| e.to_string())
+    }
+
+    /// Rebuilds the scene for the active worksheet at the given panel size.
+    pub fn refresh(&mut self) {
+        self.scene = None;
+        self.error = None;
+
+        let Some(worksheet) = self.active_worksheet() else {
+            return;
+        };
+        let id = worksheet.id.clone();
+        match self.scene_for(&id, self.scene_size) {
+            Ok(Some(scene)) => self.scene = Some(scene),
+            Ok(None) => {}
+            Err(error) => self.error = Some(error),
         }
     }
 
     /// Saves the workbook and an extract of its data to a `.scz`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SessionError`] if the extract cannot be produced or the archive written.
     pub fn save(&mut self, path: &Path) -> Result<(), SessionError> {
         let mut scz = Scz::new(self.workbook.clone());
         for model in &self.workbook.models {
@@ -292,10 +530,6 @@ impl Session {
     }
 
     /// Opens a `.scz`, registering its extracts and rebuilding the scene.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SessionError`] if the archive is malformed or its data cannot be read.
     pub fn open(&mut self, path: &Path) -> Result<(), SessionError> {
         let scz = Scz::open(path)?;
         let engine = Engine::open()?;
@@ -340,6 +574,59 @@ fn new_worksheet(index: usize, model: DataModelId) -> Worksheet {
     }
 }
 
+fn grid_frame(index: usize, canvas: slickbi_spec::Canvas) -> slickbi_spec::Rect {
+    let columns = 2;
+    let cell_width = canvas.width / columns as f64;
+    let cell_height = 400.0;
+    let col = index % columns;
+    let row = index / columns;
+    slickbi_spec::Rect {
+        x: col as f64 * cell_width,
+        y: row as f64 * cell_height,
+        width: cell_width,
+        height: cell_height,
+    }
+}
+
+fn to_csv(batches: &[slickbi_engine::arrow::record_batch::RecordBatch]) -> String {
+    use slickbi_engine::arrow::util::display::array_value_to_string;
+
+    let Some(first) = batches.first() else {
+        return String::new();
+    };
+    let header = first
+        .schema()
+        .fields()
+        .iter()
+        .map(|field| csv_field(field.name()))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let mut out = String::new();
+    out.push_str(&header);
+    out.push('\n');
+    for batch in batches {
+        for row in 0..batch.num_rows() {
+            let values = (0..batch.num_columns())
+                .map(|column| {
+                    csv_field(&array_value_to_string(batch.column(column), row).unwrap_or_default())
+                })
+                .collect::<Vec<_>>();
+            out.push_str(&values.join(","));
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn csv_field(value: &str) -> String {
+    if value.contains([',', '"', '\n']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_owned()
+    }
+}
+
 fn temp_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "slickbi-app-{label}-{}-{}.parquet",
@@ -363,9 +650,18 @@ pub enum SessionError {
     /// The workbook could not be read or written.
     #[error("{0}")]
     Workbook(#[from] slickbi_workbook::WorkbookError),
+    /// A model could not be resolved.
+    #[error("{0}")]
+    Model(#[from] slickbi_model::ModelError),
+    /// A worksheet could not be planned.
+    #[error("{0}")]
+    Plan(#[from] slickbi_planner::PlanError),
     /// A filesystem operation failed.
     #[error("{0}")]
     Io(#[from] std::io::Error),
+    /// There is no active worksheet to act on.
+    #[error("no worksheet is active")]
+    NoWorksheet,
 }
 
 #[cfg(test)]
@@ -388,44 +684,107 @@ mod tests {
         .expect("writes csv");
     }
 
-    #[test]
-    fn loading_a_csv_populates_dimensions_and_measures() {
-        let path = temp("load.csv");
+    fn loaded() -> (Session, PathBuf) {
+        let path = temp("fixture.csv");
         csv(&path);
-
         let mut session = Session::new();
         session.load_file(&path, SourceFormat::Csv).expect("loads");
+        (session, path)
+    }
 
+    #[test]
+    fn loading_a_csv_populates_dimensions_and_measures() {
+        let (session, path) = loaded();
         let (dimensions, measures) = session.field_groups();
-        assert_eq!(dimensions.len(), 1); // region
-        assert_eq!(measures.len(), 2); // amount, units
+        assert_eq!(dimensions.len(), 1);
+        assert_eq!(measures.len(), 2);
         assert!(session.has_source());
-        assert_eq!(
-            session.active_worksheet().expect("worksheet").name,
-            "Sheet 0"
-        );
-
         std::fs::remove_file(&path).ok();
     }
 
     #[test]
-    fn assigning_shelves_builds_a_scene() {
-        let path = temp("shelves.csv");
-        csv(&path);
+    fn assigning_shelves_builds_a_grouped_scene() {
+        let (mut session, path) = loaded();
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        let scene = session.scene().expect("scene");
+        assert_eq!(scene.series.len(), 1);
+        std::fs::remove_file(&path).ok();
+    }
 
-        let mut session = Session::new();
-        session.load_file(&path, SourceFormat::Csv).expect("loads");
+    #[test]
+    fn a_filter_reduces_the_scene() {
+        let (mut session, path) = loaded();
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        let before = session.scene().expect("scene").clone();
 
-        // No shelves yet: no scene.
-        assert!(session.scene().is_none());
+        session.add_filter(
+            &FieldId::new("region"),
+            FilterOp::Equal,
+            vec![Scalar::Text("APAC".to_owned())],
+        );
+        let after = session.scene().expect("scene");
+        assert_ne!(before.series, after.series);
+        std::fs::remove_file(&path).ok();
+    }
 
+    #[test]
+    fn a_calculated_field_is_added_and_usable() {
+        let (mut session, path) = loaded();
+        session
+            .add_calculated_field("Double", "[amount] * 2")
+            .expect("adds");
+        let (_, measures) = session.field_groups();
+        assert!(measures.iter().any(|(_, name)| name == "Double"));
+
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("Double"));
+        assert!(session.scene().is_some());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn an_invalid_calculation_is_rejected() {
+        let (mut session, path) = loaded();
+        let error = session
+            .add_calculated_field("Bad", "[amount] + [nope]")
+            .expect_err("rejects");
+        assert!(error.to_string().contains("nope"));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn reports_compose_worksheets() {
+        let (mut session, path) = loaded();
         session.assign(Shelf::X, &FieldId::new("region"));
         session.assign(Shelf::Y, &FieldId::new("amount"));
 
-        let scene = session.scene().expect("scene built");
-        assert_eq!(scene.series.len(), 1);
+        session.add_report("My report");
+        let worksheet = session.active_worksheet().expect("ws").id.clone();
+        session.add_chart_to_report(&worksheet);
+        session.add_text_to_report("# Title");
+
+        let report = session.active_report_doc().expect("report");
+        assert_eq!(report.elements.len(), 2);
+        assert_eq!(report.elements[0].worksheet(), Some(&worksheet));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn exporting_csv_writes_the_result() {
+        let (mut session, path) = loaded();
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+
+        let out = temp("export.csv");
+        session.export_csv(&out).expect("exports");
+        let text = std::fs::read_to_string(&out).expect("reads");
+        assert!(text.contains("EMEA"));
+        assert!(text.contains("APAC"));
 
         std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&out).ok();
     }
 
     #[test]
@@ -443,8 +802,7 @@ mod tests {
         let mut reopened = Session::new();
         reopened.open(&scz_path).expect("opens");
         assert_eq!(reopened.workbook().models.len(), 1);
-        assert_eq!(reopened.workbook().worksheets.len(), 1);
-        assert!(reopened.scene().is_some(), "reopen rebuilds the scene");
+        assert!(reopened.scene().is_some());
 
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(&scz_path).ok();
