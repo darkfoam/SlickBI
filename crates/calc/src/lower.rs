@@ -67,6 +67,9 @@ fn lower_expression(
                     name: name.clone(),
                     span: expr.span,
                 })?;
+            for value in &binding.params {
+                params.push(value.clone());
+            }
             Ok(scalar(&binding.sql, binding.value_type, false))
         }
         ExprKind::Unary { op, operand } => {

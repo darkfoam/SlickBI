@@ -37,7 +37,7 @@ use std::fmt;
 use thiserror::Error;
 
 pub use lexer::Span;
-pub use parser::Expr;
+pub use parser::{Expr, ExprKind};
 
 /// The type of a value inside a calculation.
 ///
@@ -131,7 +131,7 @@ impl fmt::Display for ValueType {
 }
 
 /// One field a calculation may reference.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldBinding {
     /// The name used inside brackets, for example `[Revenue]`.
     pub name: String,
@@ -139,15 +139,37 @@ pub struct FieldBinding {
     pub sql: String,
     /// The field's type.
     pub value_type: ValueType,
+    /// The values for the placeholders inside `sql`, in placeholder order.
+    ///
+    /// A calculated field may reference another calculated field. That field's SQL already
+    /// contains placeholders, so the resolver must carry the values that fill them; lowering a
+    /// reference splices them into the surrounding query in the right order.
+    pub params: Vec<ParamValue>,
 }
 
 impl FieldBinding {
-    /// Creates a binding.
+    /// Creates a binding with no bound values.
     pub fn new(name: impl Into<String>, sql: impl Into<String>, value_type: ValueType) -> Self {
         Self {
             name: name.into(),
             sql: sql.into(),
             value_type,
+            params: Vec::new(),
+        }
+    }
+
+    /// Creates a binding whose SQL already contains placeholders.
+    pub fn with_params(
+        name: impl Into<String>,
+        sql: impl Into<String>,
+        value_type: ValueType,
+        params: Vec<ParamValue>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            sql: sql.into(),
+            value_type,
+            params,
         }
     }
 }

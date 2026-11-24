@@ -1,0 +1,12 @@
+[package]
+name = "slickbi-model"
+description = "SlickBI semantic model resolution: fields, calculated fields and SQL bindings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+slickbi-calc.workspace = true
+slickbi-spec.workspace = true
+thiserror.workspace = true
