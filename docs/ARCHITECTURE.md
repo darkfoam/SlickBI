@@ -199,7 +199,7 @@ Properties that are not negotiable:
 Nothing in the desktop app writes to a hidden application directory except preferences, logs the
 user asked for, and the crash dump they opted into.
 
-## Hosted services (1.2 and later)
+## Hosted services (0.3.0 and later)
 
 - Static published bundles are served by `cloud-publish` from an internal blob abstraction. There
   is no CDN in v1; the abstraction exists so one can be added without touching call sites.

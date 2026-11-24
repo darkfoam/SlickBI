@@ -1,4 +1,4 @@
-# MVP — 0.3 "Workbench"
+# MVP — 0.0.3 "Workbench"
 
 The first version that is a product rather than a demonstration. Someone who did not write it
 can install nothing, open a workbook, and be productive.
@@ -38,7 +38,7 @@ Anything in this list is a deliberate no, not an oversight:
 - Accounts, billing, licences, or any network call to us
 - Print export, PDF, SVG, HTML — preview image only
 - Publishing, embedding, sync, hosted anything
-- Undo and redo (U16, first thing in 1.0)
+- Undo and redo (U16, first thing in 0.1.0)
 - Window functions and LOD expressions (C05, C06)
 - Relationships and joins (M05, M06). MVP is single-table only, plus unions are out too
 - Maps, small multiples, dual axis, annotations, conditional formatting
@@ -88,7 +88,7 @@ Each criterion is a test, not a wish. Numbers are asserted exactly.
 | MVP-13 | A bar clicked in report chart A | Charts B and C in the same report filter to that category; clicking empty space clears |
 | MVP-14 | Report resized from 1400 px to 900 px wide | No element overlaps or is clipped; the grid reflows deterministically |
 | MVP-15 | Workbook saved, app quit, workbook reopened | Identical worksheets, reports, layout, tab order, filters and theme |
-| MVP-16 | A workbook written by 0.2 opened in 0.3 | It opens through the migration path with identical chart semantics |
+| MVP-16 | A workbook written by 0.0.2 opened in 0.0.3 | It opens through the migration path with identical chart semantics |
 | MVP-17 | Any result exported as CSV | Byte-identical to the same query run through DuckDB's CSV writer, row order included |
 | MVP-18 | `slickbi-cli render` on a report | Produces the same image as the on-screen report within the documented tolerance |
 | MVP-19 | App left running for 8 hours with a 1M-row extract | Resident memory grows less than 10% and no task slows below the interaction target |
@@ -146,10 +146,10 @@ Full strategy in [`TESTING.md`](TESTING.md). MVP-specific requirements:
 | Risk | Why it matters now | Mitigation |
 |---|---|---|
 | egui drag and drop on shelves feels bad | The whole workflow is dragging; if this is awkward, the product fails at step two | Prototype the shelf interaction in week one, before the rest of the shell |
-| No undo at launch | Users expect it; a mis-drag can destroy work | Make destructive operations confirmable and make everything else cheap to redo; ship undo first in 1.0 |
+| No undo at launch | Users expect it; a mis-drag can destroy work | Make destructive operations confirmable and make everything else cheap to redo; ship undo first in 0.1.0 |
 | Report live-reference semantics confuse users | Deleting or editing a shared worksheet has surprising blast radius | Always show "used in N reports", warn before delete, allow fork in one click |
-| Single-table limitation frustrates real datasets | Analysts often need two tables | Be explicit in the UI; allow a SQL-defined source as the escape hatch even if joins are 1.1 |
-| Migration path exists but is untested against nothing | 0.3 is the first format that anyone keeps | Freeze the format at 0.3, write the migration harness, and never change a serialized field without a fixture |
+| Single-table limitation frustrates real datasets | Analysts often need two tables | Be explicit in the UI; allow a SQL-defined source as the escape hatch even if joins are 0.2.0 |
+| Migration path exists but is untested against nothing | 0.0.3 is the first format that anyone keeps | Freeze the format at 0.0.3, write the migration harness, and never change a serialized field without a fixture |
 
 ## 10. Ship checklist
 
@@ -160,4 +160,4 @@ Full strategy in [`TESTING.md`](TESTING.md). MVP-specific requirements:
 - [ ] `FEATURES.md` statuses updated to `done` for every shipped ID
 - [ ] `cargo xtask ci` green on the release branch
 - [ ] No ignored tests, no warnings, no TODOs without IDs
-- [ ] A tagged `0.3.0` on `main`, and `main` merged back into `dev`
+- [ ] A tagged `0.0.3` on `main`, and `main` merged back into `dev`

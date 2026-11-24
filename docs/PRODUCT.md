@@ -180,7 +180,7 @@ The public statement, which appears on the pricing page and in the app before th
 > machine. If that trade is wrong for you, do not use sync — the desktop app never needs it.
 
 A zero-knowledge mode may be offered later as an opt-in for people who want it, clearly labelled
-as unrecoverable. It is not on the roadmap before 2.0.
+as unrecoverable. It is not on the roadmap before 0.5.0.
 
 ## Hosting and credentials
 
@@ -205,9 +205,9 @@ the default, because it fails the "portfolio site while I am asleep" test.
 
 ## Nothing is hosted in v1
 
-Version 1.0 is local-only: no accounts are required, no service stores anything, and the only
+Version 0.1.0 is local-only: no accounts are required, no service stores anything, and the only
 server component is the export renderer used by Pro users. Hosted sync, publishing, embeds and
-scheduled refresh arrive in 1.2, after the local product is proven.
+scheduled refresh arrive in 0.3.0, after the local product is proven.
 
 ## Enforcement, honestly
 

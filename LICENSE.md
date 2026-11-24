@@ -41,5 +41,5 @@ software or its use.
 
 This file is a project placeholder, not a reviewed legal document. It must be replaced by a proper
 end-user licence agreement, reviewed by a lawyer in the target jurisdictions, before the first
-public release in 0.4. In particular it needs: consumer rights language for the EU and UK, refund
+first paid release in 0.0.4. In particular it needs: consumer rights language for the EU and UK, refund
 terms, a data processing addendum for hosted features, and a trademark policy.

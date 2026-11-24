@@ -9,7 +9,7 @@ everything to your own disk.
 ## Status
 
 Pre-alpha. The repository currently contains the specification and the beginning of the core
-libraries. Nothing is installable yet. The MVP target is 0.3 — see [`docs/MVP.md`](docs/MVP.md)
+libraries. Nothing is installable yet. The MVP target is 0.0.3 — see [`docs/MVP.md`](docs/MVP.md)
 and [`docs/RELEASES.md`](docs/RELEASES.md).
 
 ## What is free
@@ -41,7 +41,7 @@ Requires a current stable Rust toolchain and a C++ toolchain for the embedded da
 cargo xtask ci      # format, lint, test, boundary checks
 ```
 
-Platform installers are not wired up yet; that lands in 0.4.
+Platform installers are not wired up yet; that lands in 0.0.4.
 
 ## Licence
 

@@ -120,6 +120,17 @@ The three buckets in `PRODUCT.md` are a contract, not a mood:
 
 If a task seems to need something in those buckets, stop and raise it before writing code.
 
+## Versioning
+
+| Phase | Pattern | Rules |
+|---|---|---|
+| Alpha | `0.0.x` | Unstable. Anything may change, including the workbook format. Not advertised. |
+| Beta | `0.x.y` | Public and sellable. New features bump `x`, breaking changes bump `y`, fixes bump the patch. Workbooks always migrate. |
+| Stable | `X.Y.Z` | Standard semantic versioning, format frozen within a major version. |
+
+`1.0.0` is not scheduled. It is cut only after `0.9.x` meets the stability bar in `RELEASES.md`.
+Never tag a release above what the roadmap has reached, and never move a tag after it is pushed.
+
 ## Release process
 
 1. Confirm every exit criterion in `RELEASES.md` for the version is met.

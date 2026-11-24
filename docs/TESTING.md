@@ -1,7 +1,7 @@
 # Testing
 
 Testing is the main quality control in this project, because there is no QA team and no beta
-programme until 0.3. The rule is simple: **if a behaviour matters, a test names it.**
+programme until 0.0.3. The rule is simple: **if a behaviour matters, a test names it.**
 
 ## Principles
 
