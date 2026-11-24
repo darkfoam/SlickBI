@@ -1,0 +1,24 @@
+[package]
+name = "slickbi-app"
+description = "SlickBI desktop application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "slickbi"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.37"
+rfd = "0.15"
+slickbi-calc.workspace = true
+slickbi-connectors.workspace = true
+slickbi-engine.workspace = true
+slickbi-model.workspace = true
+slickbi-planner.workspace = true
+slickbi-scene.workspace = true
+slickbi-spec.workspace = true
+slickbi-workbook.workspace = true
+thiserror.workspace = true
