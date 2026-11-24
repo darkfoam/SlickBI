@@ -1,0 +1,20 @@
+[package]
+name = "slickbi-cli"
+description = "SlickBI command line interface (A01)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "slickbi-cli"
+path = "src/main.rs"
+
+[dependencies]
+slickbi-calc.workspace = true
+slickbi-engine.workspace = true
+slickbi-model.workspace = true
+slickbi-planner.workspace = true
+slickbi-spec.workspace = true
+slickbi-workbook.workspace = true
+thiserror.workspace = true
