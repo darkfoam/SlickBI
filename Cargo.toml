@@ -5,7 +5,7 @@ members = ["crates/*", "xtask"]
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 publish = false
 
 [workspace.dependencies]
@@ -17,6 +17,7 @@ slickbi-engine = { path = "crates/engine" }
 slickbi-workbook = { path = "crates/workbook" }
 slickbi-scene = { path = "crates/scene" }
 slickbi-render = { path = "crates/render" }
+slickbi-connectors = { path = "crates/connectors" }
 duckdb = { version = "~1.20001.0", features = ["bundled", "json", "parquet"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 arrow = "60"

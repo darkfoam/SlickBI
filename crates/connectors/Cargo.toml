@@ -1,0 +1,16 @@
+[package]
+name = "slickbi-connectors"
+description = "SlickBI source adapters: schema discovery and typing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+slickbi-engine.workspace = true
+slickbi-spec.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+arrow.workspace = true
+slickbi-calc.workspace = true
