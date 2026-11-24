@@ -169,6 +169,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "slickbi-calc"
+version = "0.0.1"
+dependencies = [
+ "slickbi-spec",
+ "thiserror",
+]
+
+[[package]]
 name = "slickbi-spec"
 version = "0.0.1"
 dependencies = [

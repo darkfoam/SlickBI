@@ -1,0 +1,11 @@
+[package]
+name = "slickbi-calc"
+description = "SlickBI calculation language: parse, type-check and lower to SQL"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+slickbi-spec.workspace = true
+thiserror.workspace = true
