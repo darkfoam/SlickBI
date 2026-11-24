@@ -1,0 +1,18 @@
+[package]
+name = "slickbi-render"
+description = "SlickBI software renderer: scenes to PNG"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+slickbi-scene.workspace = true
+tiny-skia.workspace = true
+ab_glyph.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+slickbi-planner.workspace = true
+slickbi-spec.workspace = true
+arrow.workspace = true
