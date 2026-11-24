@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use slickbi_cli::{OutputFormat, compile, inspect, query, validate};
+use slickbi_cli::{OutputFormat, compile, inspect, query, render, validate};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -56,6 +56,26 @@ fn run(args: &[String]) -> Result<String, slickbi_cli::CliError> {
             };
             query(&path, worksheet, format)
         }
+        "render" => {
+            let path = path_arg(args)?;
+            let Some(worksheet) = flag(args, "--worksheet") else {
+                return Err(usage_error("render needs --worksheet <id|name>"));
+            };
+            let out = flag(args, "--out")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("chart.png"));
+            let width = flag(args, "--width")
+                .map(|v| v.parse().unwrap_or(800.0))
+                .unwrap_or(800.0);
+            let height = flag(args, "--height")
+                .map(|v| v.parse().unwrap_or(600.0))
+                .unwrap_or(600.0);
+            let scale = flag(args, "--scale")
+                .map(|v| v.parse().unwrap_or(2.0))
+                .unwrap_or(2.0);
+            render(&path, worksheet, &out, (width, height), scale)?;
+            Ok(format!("wrote {}\n", out.display()))
+        }
         _ => Err(usage_error(&format!("unknown command '{command}'"))),
     }
 }
@@ -93,6 +113,7 @@ Usage:
   slickbi-cli compile  FILE.scz [--worksheet <id|name>]
   slickbi-cli inspect  FILE.scz
   slickbi-cli query    FILE.scz --worksheet <id|name> [--format table|csv]
+  slickbi-cli render   FILE.scz --worksheet <id|name> --out chart.png [--width 800 --height 600 --scale 2]
 "
     .to_owned()
 }

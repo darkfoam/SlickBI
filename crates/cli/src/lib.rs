@@ -107,11 +107,7 @@ pub fn inspect(path: &Path) -> Result<String, CliError> {
 pub fn query(path: &Path, worksheet: &str, format: OutputFormat) -> Result<String, CliError> {
     let scz = Scz::open(path)?;
     let workbook = scz.workbook();
-    let worksheet = workbook
-        .worksheets
-        .iter()
-        .find(|w| w.id.as_str() == worksheet || w.name == worksheet)
-        .ok_or_else(|| CliError::WorksheetNotFound(worksheet.to_owned()))?;
+    let worksheet = find_worksheet(workbook, worksheet)?;
 
     let model = model_for(workbook, worksheet)?;
     ensure_extracts(&scz, &model)?;
@@ -130,6 +126,62 @@ pub fn query(path: &Path, worksheet: &str, format: OutputFormat) -> Result<Strin
         OutputFormat::Table => Ok(pretty(&result.batches)),
         OutputFormat::Csv => Ok(csv(&result.batches)),
     }
+}
+
+/// Renders a worksheet to a PNG file.
+///
+/// The worksheet is planned, executed against the embedded extracts, turned into a [`Scene`] and
+/// rasterised at the given device scale. This is the same path the on-screen renderer uses, so
+/// the image is a faithful preview of the chart.
+///
+/// # Errors
+///
+/// Returns [`CliError`] for the same reasons as [`query`], plus scene and rendering failures.
+pub fn render(
+    path: &Path,
+    worksheet: &str,
+    out: &Path,
+    size: (f32, f32),
+    scale: f32,
+) -> Result<(), CliError> {
+    let scz = Scz::open(path)?;
+    let workbook = scz.workbook();
+    let worksheet = find_worksheet(workbook, worksheet)?;
+    let mark = worksheet.mark;
+
+    let model = model_for(workbook, worksheet)?;
+    ensure_extracts(&scz, &model)?;
+
+    let engine = Engine::open()?;
+    let temp_files = register_extracts(&engine, &scz)?;
+    let query = plan(&model, worksheet, &PlanOptions::default())?;
+    let result = engine.execute(&query.sql, &query.params)?;
+    for path in temp_files {
+        std::fs::remove_file(path).ok();
+    }
+
+    let spec = slickbi_scene::SceneSpec {
+        mark,
+        columns: &query.columns,
+        batches: &result.batches,
+        size,
+        margins: slickbi_scene::Margins::default(),
+    };
+    let scene = slickbi_scene::build(&spec)?;
+    let png = slickbi_render::render_png(&scene, scale)?;
+    std::fs::write(out, png)?;
+    Ok(())
+}
+
+fn find_worksheet<'a>(
+    workbook: &'a Workbook,
+    name: &str,
+) -> Result<&'a slickbi_spec::Worksheet, CliError> {
+    workbook
+        .worksheets
+        .iter()
+        .find(|w| w.id.as_str() == name || w.name == name)
+        .ok_or_else(|| CliError::WorksheetNotFound(name.to_owned()))
 }
 
 fn select_worksheets<'a>(
@@ -247,6 +299,12 @@ pub enum CliError {
     /// The engine reported an error.
     #[error("{0}")]
     Engine(#[from] slickbi_engine::EngineError),
+    /// A scene could not be built.
+    #[error("{0}")]
+    Scene(#[from] slickbi_scene::SceneError),
+    /// A scene could not be rendered.
+    #[error("{0}")]
+    Render(#[from] slickbi_render::RenderError),
     /// A filesystem operation failed.
     #[error("{0}")]
     Io(#[from] std::io::Error),

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use slickbi_calc::ParamValue;
-use slickbi_cli::{OutputFormat, compile, inspect, query, validate};
+use slickbi_cli::{OutputFormat, compile, inspect, query, render, validate};
 use slickbi_engine::arrow::array::{Array, Float64Array, StringArray};
 use slickbi_engine::{Engine, SourceFormat};
 use slickbi_model::Model;
@@ -206,6 +206,26 @@ fn the_cli_performs_the_same_work() {
     assert!(csv.contains("APAC"), "{csv}");
     assert!(csv.contains("EMEA"), "{csv}");
     assert!(csv.contains("13.75"), "{csv}");
+}
+
+#[test]
+fn render_writes_a_png() {
+    let path = fixture();
+    let out = std::env::temp_dir().join(format!(
+        "slickbi-render-{}-{}.png",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    render(&path, "Revenue by region", &out, (400.0, 300.0), 2.0).expect("renders");
+    let bytes = std::fs::read(&out).expect("reads");
+    assert!(
+        bytes.len() > 1000,
+        "a chart PNG should be more than a header"
+    );
+    assert_eq!(
+        &bytes[..8],
+        &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
+    );
 }
 
 #[test]
