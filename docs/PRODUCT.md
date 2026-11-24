@@ -31,6 +31,23 @@ change a chart's title, legend, axes, padding and border. It cannot change what 
 measures. That single rule is why editing a chart can never silently rewrite a finished report's
 numbers, and why reports stay current without anyone pressing refresh.
 
+## Design language
+
+The product looks the way it feels to use: calm, fast and confident.
+
+- **Minimal, not empty.** Every surface has exactly what the task needs and nothing else. The
+  shelves, the data pane and the marks are the interface; no chrome earns a place it has not used.
+- **Native before novel.** On macOS it feels like a good macOS app, on Windows like a good Windows
+  app. Platform conventions — window chrome, menus, keyboard, spacing — win over a cross-platform
+  lowest common denominator.
+- **Quiet colour, decisive motion.** One accent, generous whitespace, and type that carries the
+  hierarchy. Motion is fast and purposeful: a chart re-renders; it never animates for attention.
+- **Beautiful is a default, not a theme.** The default theme is the best-looking one. Custom
+  themes exist to match a company, never to fix an ugly default.
+
+The same discipline applies to the calculation editor, the data pane and the report canvas: the
+first version is a small, legible surface that does one thing well, not a dense inspector.
+
 ## Positioning
 
 The incumbents are either expensive or entangled:

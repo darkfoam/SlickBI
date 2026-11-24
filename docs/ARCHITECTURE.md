@@ -143,18 +143,18 @@ carries a cancellation handle; superseded queries are interrupted rather than ab
 
 ## Workbook format
 
-`.scz` is a zip container:
+`.scz` is a zip container. The document is a single versioned JSON file; extracts ride alongside
+it so a workbook reopens without its original sources.
 
 ```
-manifest.json      format version, app version, ids, timestamps
-connections.json   hosts and database names, never secrets
-model.json         tables, fields, relationships
-worksheets/*.json  one file per worksheet, named by id
-reports/*.json     one file per report, named by id
-theme.json
-data/*.parquet     optional extracts
-thumbs/*.png       optional previews
+workbook.json        the document: format version, id, meta, connections,
+                     models, worksheets, reports and theme
+data/<table>.parquet optional extracts, one per table, named after the table
+thumbs/<id>.png      optional previews (written from 0.0.2)
 ```
+
+The document is serialised and validated by `slickbi-spec`; `slickbi-workbook` only packages and
+unpacks it.
 
 Properties that are not negotiable:
 
@@ -179,12 +179,18 @@ Properties that are not negotiable:
 
 ## Engine
 
-- DuckDB, embedded, built with the bundled amalgamation.
-- Extensions are not auto-installed or auto-loaded. Nothing reaches the network by default.
+- DuckDB 2.0, embedded, built from the bundled amalgamation with the `parquet` and `json` readers
+  statically linked; the `duckdb` crate re-exports `arrow` so the engine, scene and connectors
+  share one Arrow version.
+- Extensions are not auto-installed or auto-loaded (`autoinstall_known_extensions` and
+  `autoload_known_extensions` are both set off at open). Nothing reaches the network by default;
+  the HTTP client in the dependency tree is a build-time-only dependency of `libduckdb-sys`.
 - Arrow is the only interchange format between engine, scene and connectors.
-- Extracts are Parquet files inside the workbook directory, created on demand.
-- The engine interface is deliberately narrow so that a different engine could be substituted
-  without touching the planner.
+- Extracts are Parquet files inside the workbook, created on demand.
+- Cancellation is an `InterruptHandle` obtained per connection; an interrupted query fails with an
+  error, and a superseded worksheet query is interrupted rather than abandoned.
+- The engine interface is deliberately narrow — open, register a source, execute SQL with bound
+  values, interrupt — so a different engine could be substituted without touching the planner.
 
 ## Storage and secrets
 
