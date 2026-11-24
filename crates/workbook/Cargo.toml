@@ -1,0 +1,12 @@
+[package]
+name = "slickbi-workbook"
+description = "SlickBI workbook container: the .scz archive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+slickbi-spec.workspace = true
+zip.workspace = true
+thiserror.workspace = true
