@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+description = "Repository automation: CI, boundary checks, packaging"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+toml.workspace = true

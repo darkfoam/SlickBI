@@ -1,0 +1,13 @@
+[package]
+name = "slickbi-spec"
+description = "SlickBI workbook document model, format version and validation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
