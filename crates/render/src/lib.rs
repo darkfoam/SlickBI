@@ -454,7 +454,7 @@ mod tests {
     fn bars_are_drawn_in_the_series_colour() {
         // The first palette colour, #0b6e99, must appear somewhere: the bars were actually drawn.
         let pixmap = rasterize(&bar_scene(), 1.0);
-        let found = pixmap.data().chunks_exact(4).any(|px| {
+        let found = pixmap.data().as_chunks::<4>().0.iter().any(|px| {
             let (r, g, b) = (px[0] as i32, px[1] as i32, px[2] as i32);
             (r - 11).abs() < 30 && (g - 110).abs() < 30 && (b - 153).abs() < 30
         });
@@ -467,7 +467,9 @@ mod tests {
         let pixmap = rasterize(&bar_scene(), 1.0);
         let text_pixels = pixmap
             .data()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|px| {
                 let (r, g, b) = (px[0] as i32, px[1] as i32, px[2] as i32);
                 (r - 61).abs() < 40 && (g - 71).abs() < 40 && (b - 84).abs() < 40
