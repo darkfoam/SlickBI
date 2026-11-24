@@ -12,6 +12,7 @@ publish = false
 slickbi-spec = { path = "crates/spec" }
 slickbi-calc = { path = "crates/calc" }
 slickbi-model = { path = "crates/model" }
+slickbi-planner = { path = "crates/planner" }
 schemars = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

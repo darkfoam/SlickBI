@@ -85,6 +85,18 @@ impl ValueType {
         matches!(self, ValueType::Date | ValueType::Timestamp)
     }
 
+    /// Whether two values of these types may be compared with `=` or an ordering operator.
+    ///
+    /// A null value compares against anything, numeric types compare across each other, and
+    /// date-like types compare across each other; otherwise the two types must be equal.
+    pub fn comparable_with(self, other: ValueType) -> bool {
+        self == ValueType::Null
+            || other == ValueType::Null
+            || self == other
+            || (self.is_numeric() && other.is_numeric())
+            || (self.is_temporal() && other.is_temporal())
+    }
+
     /// The unifies two branch types, or reports a mismatch.
     pub(crate) fn unify(self, other: ValueType) -> Option<ValueType> {
         match (self, other) {

@@ -1,0 +1,13 @@
+[package]
+name = "slickbi-planner"
+description = "SlickBI query planner: worksheets to SQL"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+slickbi-calc.workspace = true
+slickbi-model.workspace = true
+slickbi-spec.workspace = true
+thiserror.workspace = true

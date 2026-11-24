@@ -32,8 +32,8 @@ mod report;
 mod workbook;
 
 pub use chart::{
-    Agg, AggSpec, Channel, Encoding, Mark, SortKey, Transform, WindowFrame, WindowFrameKind,
-    WindowFunction, WindowSpec, Worksheet,
+    Agg, AggSpec, Channel, Encoding, Filter, FilterOp, Mark, Scalar, SortKey, Transform,
+    WindowFrame, WindowFrameKind, WindowFunction, WindowSpec, Worksheet,
 };
 pub use ids::{
     ColumnId, ConnectionId, DataModelId, ElementId, FieldId, ParamId, RelationshipId, ReportId,

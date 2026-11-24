@@ -945,15 +945,11 @@ fn unify_all(lowered: &[Sql], span: Span) -> Result<ValueType, CalcError> {
 }
 
 fn comparable(left: ValueType, right: ValueType) -> bool {
-    left == ValueType::Null
-        || right == ValueType::Null
-        || left == right
-        || (left.is_numeric() && right.is_numeric())
-        || (left.is_temporal() && right.is_temporal())
+    left.comparable_with(right)
 }
 
 fn orderable(left: ValueType, right: ValueType) -> bool {
-    comparable(left, right) && !(left == ValueType::Boolean && right == ValueType::Boolean)
+    left.comparable_with(right) && !(left == ValueType::Boolean && right == ValueType::Boolean)
 }
 
 fn is_boolean(value_type: ValueType) -> bool {
