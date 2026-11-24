@@ -1,0 +1,12 @@
+[package]
+name = "slickbi-engine"
+description = "SlickBI query engine: the embedded DuckDB session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+slickbi-calc.workspace = true
+duckdb.workspace = true
+thiserror.workspace = true

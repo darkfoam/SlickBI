@@ -13,6 +13,7 @@ slickbi-spec = { path = "crates/spec" }
 slickbi-calc = { path = "crates/calc" }
 slickbi-model = { path = "crates/model" }
 slickbi-planner = { path = "crates/planner" }
+duckdb = { version = "~1.20001.0", features = ["bundled", "json", "parquet"] }
 schemars = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
