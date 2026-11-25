@@ -1765,6 +1765,13 @@ impl SlickBiApp {
                     .weak()
                     .small(),
                 );
+                if expression_has_division(&self.calc_expr) {
+                    ui.add_space(4.0);
+                    ui.colored_label(
+                        egui::Color32::from_rgb(0xB8, 0x7A, 0x00),
+                        "Division by zero returns NULL for that row; check the divisor.",
+                    );
+                }
                 if let Some(error) = &self.calc_error {
                     ui.add_space(4.0);
                     ui.colored_label(egui::Color32::from_rgb(0xB0, 0x30, 0x20), error);
@@ -2866,6 +2873,46 @@ fn parse_parameter_value(data_type: DataType, text: &str) -> Option<Scalar> {
     }
 }
 
+fn expression_has_division(expression: &str) -> bool {
+    let characters: Vec<char> = expression.chars().collect();
+    let mut index = 0usize;
+    let mut in_text = false;
+    let mut in_field = false;
+    while index < characters.len() {
+        let character = characters[index];
+        if in_text {
+            if character == '\'' {
+                if index + 1 < characters.len() && characters[index + 1] == '\'' {
+                    index += 2;
+                    continue;
+                }
+                in_text = false;
+            }
+            index += 1;
+            continue;
+        }
+        if in_field {
+            if character == ']' {
+                if index + 1 < characters.len() && characters[index + 1] == ']' {
+                    index += 2;
+                    continue;
+                }
+                in_field = false;
+            }
+            index += 1;
+            continue;
+        }
+        match character {
+            '\'' => in_text = true,
+            '[' => in_field = true,
+            '/' => return true,
+            _ => {}
+        }
+        index += 1;
+    }
+    false
+}
+
 fn draw_scene(ui: &mut egui::Ui, scene: &Scene) {
     let size = egui::vec2(scene.width, scene.height);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -3178,4 +3225,25 @@ fn to_color(color: [f32; 4]) -> egui::Color32 {
         (color[2] * 255.0) as u8,
         (color[3] * 255.0) as u8,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expression_has_division;
+
+    #[test]
+    fn division_is_detected_outside_text_and_field_names() {
+        assert!(expression_has_division("[amount] / [units]"));
+        assert!(expression_has_division("SUM([amount]) / COUNT([units])"));
+        assert!(!expression_has_division("[amount] - [units]"));
+        assert!(!expression_has_division("'a/b'"), "text is not division");
+        assert!(
+            !expression_has_division("[a/b]"),
+            "a field name is not division"
+        );
+        assert!(
+            expression_has_division("[a]]b] / 2"),
+            "escaped brackets survive"
+        );
+    }
 }
