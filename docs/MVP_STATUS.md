@@ -1,0 +1,251 @@
+# MVP status map — 0.0.3 "Workbench"
+
+Snapshot: 2026-11-24, taken from the `dev` tree at `e6193dd`.
+
+This is a **derived** map of what stands between the current tree and a completed MVP. The
+authoritative documents remain [`FEATURES.md`](FEATURES.md) (per-feature status),
+[`MVP.md`](MVP.md) (acceptance criteria), [`RELEASES.md`](RELEASES.md) (scope and exit criteria)
+and [`TESTING.md`](TESTING.md) (test obligations). Where this map disagrees with `FEATURES.md`,
+the disagreement is called out in §5 — it means a status needs updating, not that the map is
+right.
+
+Status legend: **Done** = implemented, wired into the app/CLI and covered by tests. **Partial** =
+some layer exists (often the planner or the model) but a required layer or the UI is missing.
+**Not started** = no meaningful implementation.
+
+Effort to close: **S** ≈ hours, **M** ≈ a few days, **L** ≈ one to two weeks, **XL** = external
+infrastructure or a new dependency.
+
+---
+
+## 1. What "completed MVP" requires
+
+A feature is not enough on its own. The MVP ships when **all four** are true:
+
+1. **Feature scope** — everything in the 0.0.1, 0.0.2 and 0.0.3 scopes is present
+   (`RELEASES.md`). §2 covers this.
+2. **Acceptance criteria** — MVP-01 … MVP-20 pass, asserted by tests (`MVP.md` §5). §3 covers this.
+3. **Quality bars** — the §6 budgets are measured and enforced. §4 covers this.
+4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
+   the §10 ship checklist is checked on all three platforms.
+
+At the snapshot, of the **48 MVP-scope features**: **21 done, 15 partial, 12 not started**.
+
+---
+
+## 2. Feature map (scope = 0.0.1 + 0.0.2 + 0.0.3)
+
+### Data sources
+
+| ID | Feature | Status | Reality / gap | Effort |
+|---|---|---|---|---|
+| D01 | CSV + drag and drop | **Done** | `connectors::discover`, `Session::load_file`, window drop | — |
+| D02 | Excel `.xlsx` + sheet selection | **Not started** | DuckDB `excel` extension is disabled (no network auto-load); needs a reader crate (not in the local cargo cache) | L |
+| D03 | Parquet | **Done** | `read_parquet` discovery | — |
+| D04 | JSON / NDJSON | **Done** | `read_json_auto` | — |
+| D05 | SQLite | **Not started** | DuckDB `sqlite` extension disabled; needs extension or driver | L |
+| D06 | PostgreSQL | **Not started** | Needs driver + keychain credentials + read-only flow | XL |
+| D07 | MySQL / MariaDB | **Not started** | Same as D06 | XL |
+| D14 | Local extract to Parquet | **Partial** | `Session::save` embeds a Parquet extract per table; no user-facing "extract this source" action for arbitrary sources | M |
+| D15 | Live query mode | **Partial** | File sources are queried live; database live mode is not implemented (depends on D06/D07) | L |
+
+### Semantic model
+
+| ID | Feature | Status | Reality / gap | Effort |
+|---|---|---|---|---|
+| M01 | Auto typing into dims/measures | **Done** | `connectors::infer_role`; data pane split | — |
+| M02 | Rename / hide / reorder / folders | **Not started** | `Field` has `name`/`hidden`, but no API or UI. Rename is coupled to calculations (expressions reference `[Name]`), so it must rewrite references | M |
+| M03 | Type override, number and date formats | **Partial** | Number formats done end-to-end + editor (`4b8c09f`). Type override and date formats remain; dates are not even drawable on an axis yet | M |
+| M04 | Field descriptions | **Not started** | `Field.description` exists; no editor and no surface | S |
+
+### Calculations
+
+| ID | Feature | Status | Reality / gap | Effort |
+|---|---|---|---|---|
+| C01 | Arithmetic, comparison, IF/CASE, text, date | **Done** | `slickbi-calc` lexer/parser/typing/lowering | — |
+| C02 | Aggregations incl. distinct/median | **Done** | `Agg` → SQL; engine tests | — |
+| C03 | Parameters in calculations and filters | **Not started** | No `Parameter` in the document, no filter binding, no calc references. **MVP-06 depends on this** | L |
+| C04 | Type checking with inline, spanning errors | **Partial** | Typed `CalcError` carries spans; the editor shows the message text, not an inline highlight at the span | M |
+
+### Charts and worksheets
+
+| ID | Feature | Status | Reality / gap | Effort |
+|---|---|---|---|---|
+| V01 | Bar and column charts | **Done** | Vertical and horizontal, grouped by colour (`5268723`) | — |
+| V02 | Line and area charts | **Done** | Multi-series by colour | — |
+| V03 | Scatter plots | **Done** | Multi-series by colour | — |
+| V04 | Tables | **Partial** | Planner emits a raw-row plan (`table_raw.sql` golden); **no scene, renderer or UI**. Needs a table mark/sheet type — a serialised-format decision + fixture | L |
+| V05 | Shelves: row, column, colour, size, text, detail, tooltip | **Partial** | x, y, colour done (with legend); `size`, `text`, `detail`, `tooltip` are modelled and planned but not drawn or exposed in the UI | M |
+| V06 | Axis, legend and tooltip configuration | **Partial** | Legend drawn; `show_axes`/`show_legend` overrides (`d8fa9b3`). No axis titles or tooltip configuration | M |
+| V07 | Sort and row limit | **Done** | toolbar + planner `ORDER BY`/`LIMIT` | — |
+| V08 | Heatmaps | **Not started** | `Mark::Rect` exists; scene rejects it; needs a colour scale | M |
+| V09 | Pie and donut | **Partial** | Pie done (`a6d91c9`); donut needs an inner radius (mark variant or field) | S |
+| V10 | KPI and text tiles | **Partial** | Planner emits a KPI plan (`kpi_tile.sql`, `Mark::Text`); scene rejects `Text` | M |
+| V11 | Colourblind-safe palettes by default | **Partial** | The default palette is documented colourblind-safe; no test verifies it and there is no palette choice | S |
+| V12 | Automatic chart suggestion | **Not started** | — | M |
+| T01 | Tabs: create/rename/duplicate/close/reorder | **Done** | reorder added in `007cb37` | — |
+| T03 | "Used in" indicator | **Done** | `Session::used_in`, toolbar display | — |
+| T04 | Fork a worksheet | **Done** | `duplicate_worksheet` | — |
+| T05 | Delete safety + placeholder | **Done** | warn + placeholder; validator no longer rejects dangling refs (`e6193dd`) | — |
+| T06 | Jump from report element to worksheet | **Not started** | — | S |
+
+### Reports
+
+| ID | Feature | Status | Reality / gap | Effort |
+|---|---|---|---|---|
+| R01 | Report canvas / grid | **Done** | canvas, auto-grid placement | — |
+| R02 | Live worksheet references | **Done** | scene rebuilt from the worksheet each frame | — |
+| R03 | Move, resize, reorder elements | **Done** | `caa7a17`, clamped + tested | — |
+| R04 | Text / markdown elements | **Done** | text blocks | — |
+| R05 | Per-element presentation overrides | **Done** | title/legend/axes/padding/border (`d8fa9b3`) | — |
+| R06 | Cross-filtering between elements | **Not started** | **MVP-13 depends on this**; needs a hit index + filter state + predicate plumbing | L |
+
+### Data out, automation, format, platform
+
+| ID | Feature | Status | Reality / gap | Effort |
+|---|---|---|---|---|
+| X01 | Raw CSV/Parquet export | **Done** | app + CLI; but see MVP-17 (not byte-identical to DuckDB) | — |
+| A01 | CLI validate/compile/query/inspect | **Done** | — | — |
+| A02 | CLI render worksheet **or report** | **Partial** | Worksheets render to preview/print/SVG; **reports are not rendered by the CLI** | M |
+| O01 | Published `.scz` specification | **Partial** | Format + doc comments exist; no published specification document | M |
+| O02 | Generated JSON Schema, published | **Partial** | `workbook_schema()` + a shape test; not published/served, and the app's output is not validated against it (MVP-20) | M |
+| O04 | Versioning and migration policy | **Partial** | One format version with clean refusal; no migration machinery, fixtures or written policy | M |
+| U07 | Dark and light themes | **Partial** | Light UI + two report background themes; no dark mode toggle | S |
+| U08 | Onboarding sample workbook | **Not started** | — | S |
+
+---
+
+## 3. Acceptance criteria (MVP-01 … MVP-20)
+
+| ID | Criterion (short) | Verdict | Gap to close |
+|---|---|---|---|
+| 01 | 500k CSV → fields < 3 s, no modal | **Partial** | Works; startup/ingest budget not measured |
+| 02 | Postgres field list + chart < 2 s | **Not met** | D06 missing |
+| 03 | Rows/cols chart == hand-written GROUP BY | **Met** | golden SQL + engine tests |
+| 04 | Sum→Avg == AVG | **Met** | `changing_the_aggregation_changes_the_values` |
+| 05 | Filter totals == WHERE | **Met** | filter tests + golden SQL |
+| 06 | Parameter bound to filter re-renders | **Not met** | C03 missing |
+| 07 | Divide-by-zero calc: null semantics, editor warns | **Partial** | SQL null behaviour holds; editor does not surface the risk |
+| 08 | Type error inline at span, not saved | **Partial** | Not saved (good); no inline span highlight |
+| 09 | Rename updates report panel + used-in | **Met** | name read live |
+| 10 | Delete used worksheet → placeholders, warns, names reports | **Met** | T05 fix + test |
+| 11 | Worksheet filter change updates open report | **Met** | report rebuilds from worksheet each frame |
+| 12 | Element title override affects only that report | **Met** | R05 + rendering |
+| 13 | Click bar → other charts cross-filter; empty clears | **Not met** | R06 missing |
+| 14 | Report reflows 1400→900 with no overlap/clip | **Partial** | Canvas scales; no overflow clip now, but reflow/determinism not tested at 900 px |
+| 15 | Save/quit/reopen identical | **Met** | round-trip tests |
+| 16 | 0.0.2 workbook opens via migration | **Partial** | No migration path/fixture (single format version) |
+| 17 | CSV export byte-identical to DuckDB writer | **Not met** | Hand-rolled CSV in app and CLI (quoting/format can differ) |
+| 18 | `slickbi-cli render` report == on-screen within tolerance | **Partial** | CLI renders worksheets only; no image-diff harness |
+| 19 | 8 h soak, < 10 % memory growth | **Not met** | No soak test |
+| 20 | JSON Schema validates app output, zero errors | **Partial** | Schema generated; no validator run against output |
+
+Counts: **Met 8 · Partial 7 · Not met 5.**
+
+---
+
+## 4. Quality bars (§6) and test obligations (§8 / TESTING.md)
+
+| Obligation | State |
+|---|---|
+| Cold start < 2 s | Not measured |
+| Chart render < 300 ms at 1M rows | `engine/tests/perf.rs` exists but is `#[ignore]` and asserts < 2 s, not the 300 ms budget; not in the CI gate |
+| Report re-render < 500 ms | Not measured |
+| Filter/cross-filter < 500 ms p95 | Not measured (cross-filter absent) |
+| No reachable panics; typed errors | Largely met in core crates; not audited |
+| Memory < 1 GB at 1M rows | Not measured |
+| Binary < 120 MB | Not measured |
+| Golden SQL per shape | **Present** — `crates/planner/tests/sql/duckdb/*.sql` (13 shapes) |
+| Golden image / render parity (GPU vs export) | **Missing** — no image-diff harness; app uses egui, CLI uses `tiny-skia` |
+| Fixture corpus ≥ 20 workbooks (incl. malformed) | **Missing** — one round-trip test, no corpus |
+| UI test through an egui harness | **Missing** — no `egui_kittest`/harness |
+| Soak test (1M rows, 8 h) | **Missing** |
+| Dependency audit / licence / wasm / binary-size CI gates | Only fmt, clippy, boundaries, tests run (`xtask ci`) |
+
+---
+
+## 5. Where `FEATURES.md` lags the code (fix the statuses)
+
+- **V06** is `planned` but a legend and `show_axes`/`show_legend` overrides exist → `in progress`.
+- **V11** is `planned` but the default palette is already documented colourblind-safe → `in progress`
+  (pending a verification test).
+- **A02** is `done` but report rendering is missing for the CLI → `in progress`.
+- **O01 / O02 / O04** are `planned` but the format version, refusal and generated schema exist →
+  `in progress`.
+- **D14** is `planned` but save embeds Parquet extracts → `in progress`.
+- **U07** is `planned` but a light theme and two report themes exist → `in progress`.
+- **X01** is `done` as a feature, but MVP-17 (byte-identical CSV) is a separate acceptance gap.
+
+---
+
+## 6. Path to completion (dependency-ordered)
+
+Each phase is independently shippable and leaves `cargo xtask ci` green.
+
+### Phase 1 — quick wins (finish half-built surface)
+- [ ] **V09 donut** — inner radius on the pie scene; mark choice in the toolbar. **S**
+- [ ] **M04 descriptions** — editor + tooltip; needs no format change. **S**
+- [ ] **T06 jump to source** — click a report element to activate its worksheet. **S**
+- [ ] **M02 hide + reorder** — data-pane toggles; rename deferred or done with reference rewriting. **M**
+- [ ] **V06 axis titles + tooltip config** — extend `SceneOptions`/worksheet presentation. **M**
+- [ ] **V11 palette verification** — assert contrast/colourblind separation; expose palette choice. **S**
+- [ ] **U07 dark mode** — `Visuals::dark` toggle persisted with preferences. **S**
+- [ ] **U08 onboarding workbook** — generate a small sample `.scz` on first run. **S**
+
+### Phase 2 — chart types (each needs the scene + both renderers)
+- [ ] **V10 KPI/text tiles** — scene for `Mark::Text` (planner already plans it). **M**
+- [ ] **V08 heatmaps** — `Mark::Rect` + a sequential colour scale + two categorical axes. **M**
+- [ ] **V04 tables** — new mark/sheet type (format decision + migration fixture), scene text grid,
+      renderers, UI. **L**
+- [ ] **V05 remaining shelves** — size/text/detail/tooltip through the scene and renderers. **M**
+- [ ] **V12 chart suggestion** — pick a mark from the current shelves. **M**
+
+### Phase 3 — analytical core
+- [ ] **C03 parameters** — `Workbook.parameters`, filter binding, calc references, UI, planner
+      binding. Unblocks **MVP-06**. **L**
+- [ ] **C04 inline span errors** — highlight the offending range in the calc editor. **M**
+- [ ] **M03 remainder** — type override; date-axis support and date formats. **M**
+
+### Phase 4 — reports and testing seams
+- [ ] **R06 cross-filtering** — hit index, cross-filter state, predicate per element. Unblocks
+      **MVP-13**. **L**
+- [ ] **A02 report render in the CLI** + an image-diff harness against the on-screen renderer.
+      Unblocks **MVP-18**. **M**
+
+### Phase 5 — sources (external dependencies / infrastructure)
+- [ ] **D02 Excel** — reader crate (network to fetch). **L**
+- [ ] **D05 SQLite** — extension or driver. **L**
+- [ ] **D06 Postgres / D07 MySQL** — drivers, keychain credentials, read-only flow, timeouts. **XL**
+- [ ] **D14 / D15** — explicit extracts and live DB mode (depends on the above). **L**
+
+### Phase 6 — format, acceptance and release hardening
+- [ ] **O01** spec document, **O02** publish the schema and validate the app's own output
+      (**MVP-20**), **O04** migration policy + a 0.0.2 fixture (**MVP-16**). **M**
+- [ ] **MVP-17** — export CSV through DuckDB's writer so it is byte-identical. **S**
+- [ ] **MVP-19** — soak test + memory budget; promote the perf fixture to a real 300 ms gate. **M**
+- [ ] **MVP-14** — a deterministic reflow test at 1400/900 px.
+- [ ] **MVP-01 / MVP-02** — measure ingest and first-chart budgets once the DB sources exist.
+- [ ] Fixture corpus (≥ 20 workbooks) and UI harness obligations from `TESTING.md`. **L**
+
+### Phase 7 — ship
+- [ ] Run the §10 checklist on macOS, Windows and Linux.
+- [ ] The ten-minute demo script, by a non-author, on a clean machine.
+- [ ] Update `FEATURES.md` to `done` for every shipped ID; write the changelog.
+- [ ] Cut `release/0.0.3`, `cargo xtask ci` green, merge to `main`, tag, merge back to `dev`.
+
+---
+
+## 7. Definition of done (from `MVP.md` §10)
+
+- [ ] Every acceptance criterion passes on all three platforms
+- [ ] Demo script under ten minutes by a non-author
+- [ ] Format spec and JSON Schema published
+- [ ] Changelog written
+- [ ] `FEATURES.md` statuses updated
+- [ ] `cargo xtask ci` green on the release branch
+- [ ] No ignored tests, warnings, or TODOs without IDs
+- [ ] Tag `0.0.3` on `main`, merged back to `dev`
+
+The largest risks to the MVP are the two XL/L source phases (D06/D07/D02/D05) and C03/R06. The
+cheapest large wins are Phase 1 (finish visible, half-built surface) and Phase 6 (acceptance
+hardening: CSV parity, schema validation, report render parity, soak gate).
