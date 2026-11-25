@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use slickbi_cli::{OutputFormat, compile, inspect, query, render, validate};
+use slickbi_cli::{OutputFormat, compile, inspect, query, render_preview, render_print, validate};
+use slickbi_entitlement::Entitlement;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -70,10 +71,22 @@ fn run(args: &[String]) -> Result<String, slickbi_cli::CliError> {
             let height = flag(args, "--height")
                 .map(|v| v.parse().unwrap_or(600.0))
                 .unwrap_or(600.0);
-            let scale = flag(args, "--scale")
-                .map(|v| v.parse().unwrap_or(2.0))
-                .unwrap_or(2.0);
-            render(&path, worksheet, &out, (width, height), scale)?;
+            if args.iter().any(|arg| arg == "--print") {
+                let scale = flag(args, "--scale")
+                    .map(|v| v.parse().unwrap_or(2.0))
+                    .unwrap_or(2.0);
+                // Free until S03 verifies a signed entitlement token.
+                render_print(
+                    &path,
+                    worksheet,
+                    &out,
+                    (width, height),
+                    scale,
+                    Entitlement::free(),
+                )?;
+            } else {
+                render_preview(&path, worksheet, &out, (width, height))?;
+            }
             Ok(format!("wrote {}\n", out.display()))
         }
         _ => Err(usage_error(&format!("unknown command '{command}'"))),
@@ -113,7 +126,8 @@ Usage:
   slickbi-cli compile  FILE.scz [--worksheet <id|name>]
   slickbi-cli inspect  FILE.scz
   slickbi-cli query    FILE.scz --worksheet <id|name> [--format table|csv]
-  slickbi-cli render   FILE.scz --worksheet <id|name> --out chart.png [--width 800 --height 600 --scale 2]
+  slickbi-cli render   FILE.scz --worksheet <id|name> --out chart.png [--width 800 --height 600]
+                       [--print (Pro) --scale 2]
 "
     .to_owned()
 }

@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use slickbi_calc::ParamValue;
-use slickbi_cli::render;
+use slickbi_cli::render_preview;
 use slickbi_engine::Engine;
 use slickbi_spec::{
     Agg, Channel, Column, ColumnId, DataModel, DataModelId, DataType, Encoding, Field, FieldId,
@@ -44,14 +44,8 @@ fn main() {
         ("Monthly trend", "line.png"),
         ("Units vs revenue", "scatter.png"),
     ] {
-        render(
-            &scz_path,
-            worksheet,
-            &out_dir.join(file),
-            (800.0, 500.0),
-            2.0,
-        )
-        .unwrap_or_else(|e| panic!("render {worksheet}: {e}"));
+        render_preview(&scz_path, worksheet, &out_dir.join(file), (800.0, 500.0))
+            .unwrap_or_else(|e| panic!("render {worksheet}: {e}"));
         println!("wrote {}", out_dir.join(file).display());
     }
 }

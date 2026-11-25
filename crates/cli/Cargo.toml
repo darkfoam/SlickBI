@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 slickbi-calc.workspace = true
 slickbi-engine.workspace = true
+slickbi-entitlement.workspace = true
 slickbi-model.workspace = true
 slickbi-planner.workspace = true
 slickbi-render.workspace = true

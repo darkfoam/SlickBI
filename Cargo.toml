@@ -18,6 +18,7 @@ slickbi-workbook = { path = "crates/workbook" }
 slickbi-scene = { path = "crates/scene" }
 slickbi-render = { path = "crates/render" }
 slickbi-connectors = { path = "crates/connectors" }
+slickbi-entitlement = { path = "crates/entitlement" }
 duckdb = { version = "~1.20001.0", features = ["bundled", "json", "parquet"] }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 arrow = "60"

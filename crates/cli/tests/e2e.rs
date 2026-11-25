@@ -7,7 +7,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use slickbi_calc::ParamValue;
-use slickbi_cli::{OutputFormat, compile, inspect, query, render, validate};
+use slickbi_cli::{
+    Entitlement, EntitlementError, Feature, OutputFormat, compile, inspect, query, render_preview,
+    render_print, validate,
+};
 use slickbi_engine::arrow::array::{Array, Float64Array, StringArray};
 use slickbi_engine::{Engine, SourceFormat};
 use slickbi_model::Model;
@@ -209,14 +212,14 @@ fn the_cli_performs_the_same_work() {
 }
 
 #[test]
-fn render_writes_a_png() {
+fn render_preview_writes_a_png() {
     let path = fixture();
     let out = std::env::temp_dir().join(format!(
         "slickbi-render-{}-{}.png",
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
-    render(&path, "Revenue by region", &out, (400.0, 300.0), 2.0).expect("renders");
+    render_preview(&path, "Revenue by region", &out, (400.0, 300.0)).expect("renders");
     let bytes = std::fs::read(&out).expect("reads");
     assert!(
         bytes.len() > 1000,
@@ -226,6 +229,49 @@ fn render_writes_a_png() {
         &bytes[..8],
         &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
     );
+    std::fs::remove_file(&out).ok();
+}
+
+#[test]
+fn print_export_requires_pro() {
+    let path = fixture();
+    let out = std::env::temp_dir().join(format!(
+        "slickbi-print-{}-{}.png",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    // The free tier is refused with a typed error naming the feature, and writes no file.
+    let error = render_print(
+        &path,
+        "Revenue by region",
+        &out,
+        (400.0, 300.0),
+        4.0,
+        Entitlement::free(),
+    )
+    .expect_err("free must be refused");
+    match error {
+        slickbi_cli::CliError::Entitlement(EntitlementError::RequiresPro { feature }) => {
+            assert_eq!(feature, Feature::PrintPng);
+        }
+        other => panic!("expected a requires-Pro error, got {other:?}"),
+    }
+    assert!(!out.exists(), "a refused export writes no file");
+
+    // A Pro entitlement writes the 4× image.
+    render_print(
+        &path,
+        "Revenue by region",
+        &out,
+        (400.0, 300.0),
+        4.0,
+        Entitlement::pro(),
+    )
+    .expect("pro renders");
+    let bytes = std::fs::read(&out).expect("reads");
+    assert!(bytes.len() > 1000);
+    std::fs::remove_file(&out).ok();
 }
 
 #[test]

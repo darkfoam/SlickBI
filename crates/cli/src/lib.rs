@@ -10,8 +10,10 @@
 use std::path::{Path, PathBuf};
 
 use slickbi_engine::{Engine, SourceFormat};
+pub use slickbi_entitlement::{Entitlement, EntitlementError, Feature, Plan};
 use slickbi_model::Model;
 use slickbi_planner::{PlanOptions, plan};
+use slickbi_scene::Scene;
 use slickbi_spec::Workbook;
 use slickbi_workbook::Scz;
 use thiserror::Error;
@@ -128,22 +130,49 @@ pub fn query(path: &Path, worksheet: &str, format: OutputFormat) -> Result<Strin
     }
 }
 
-/// Renders a worksheet to a PNG file.
+/// Renders a worksheet to the free, watermarked 1× PNG preview.
 ///
-/// The worksheet is planned, executed against the embedded extracts, turned into a [`Scene`] and
-/// rasterised at the given device scale. This is the same path the on-screen renderer uses, so
-/// the image is a faithful preview of the chart.
+/// This is the preview the free tier may always make. It is 1× and carries a watermark; the
+/// unwatermarked print export is [`render_print`] and needs Pro.
 ///
 /// # Errors
 ///
 /// Returns [`CliError`] for the same reasons as [`query`], plus scene and rendering failures.
-pub fn render(
+pub fn render_preview(
+    path: &Path,
+    worksheet: &str,
+    out: &Path,
+    size: (f32, f32),
+) -> Result<(), CliError> {
+    let scene = load_scene(path, worksheet, size)?;
+    let png = slickbi_render::render_preview_png(&scene)?;
+    std::fs::write(out, png)?;
+    Ok(())
+}
+
+/// Renders a worksheet to a print-quality PNG, which requires a Pro entitlement.
+///
+/// # Errors
+///
+/// Returns [`CliError::Entitlement`] on the free tier, and the same errors as [`query`] plus scene
+/// and rendering failures.
+pub fn render_print(
     path: &Path,
     worksheet: &str,
     out: &Path,
     size: (f32, f32),
     scale: f32,
+    entitlement: Entitlement,
 ) -> Result<(), CliError> {
+    entitlement.require(Feature::PrintPng)?;
+    let scene = load_scene(path, worksheet, size)?;
+    let png = slickbi_render::render_png(&scene, scale)?;
+    std::fs::write(out, png)?;
+    Ok(())
+}
+
+/// Plans, executes and builds the scene for one worksheet's embedded extract.
+fn load_scene(path: &Path, worksheet: &str, size: (f32, f32)) -> Result<Scene, CliError> {
     let scz = Scz::open(path)?;
     let workbook = scz.workbook();
     let worksheet = find_worksheet(workbook, worksheet)?;
@@ -168,10 +197,7 @@ pub fn render(
         margins: slickbi_scene::Margins::default(),
         options: slickbi_scene::SceneOptions::default(),
     };
-    let scene = slickbi_scene::build(&spec)?;
-    let png = slickbi_render::render_png(&scene, scale)?;
-    std::fs::write(out, png)?;
-    Ok(())
+    Ok(slickbi_scene::build(&spec)?)
 }
 
 fn find_worksheet<'a>(
@@ -306,6 +332,9 @@ pub enum CliError {
     /// A scene could not be rendered.
     #[error("{0}")]
     Render(#[from] slickbi_render::RenderError),
+    /// A paid feature was requested without an entitlement.
+    #[error("{0}")]
+    Entitlement(#[from] slickbi_entitlement::EntitlementError),
     /// A filesystem operation failed.
     #[error("{0}")]
     Io(#[from] std::io::Error),

@@ -34,6 +34,19 @@ const LABEL_SIZE: f32 = 11.0;
 ///
 /// Panics if the scene has a non-positive size.
 pub fn rasterize(scene: &Scene, scale: f32) -> Pixmap {
+    rasterize_with(scene, scale, false)
+}
+
+/// Rasterises the free-tier preview: 1× with a watermark.
+///
+/// # Panics
+///
+/// Panics if the scene has a non-positive size.
+pub fn rasterize_preview(scene: &Scene) -> Pixmap {
+    rasterize_with(scene, 1.0, true)
+}
+
+fn rasterize_with(scene: &Scene, scale: f32, watermark: bool) -> Pixmap {
     let width = (scene.width * scale).round().max(1.0) as u32;
     let height = (scene.height * scale).round().max(1.0) as u32;
     let mut pixmap = Pixmap::new(width, height).expect("non-zero pixmap");
@@ -49,6 +62,9 @@ pub fn rasterize(scene: &Scene, scale: f32) -> Pixmap {
     canvas.draw_axes(scene);
     canvas.draw_series(scene);
     canvas.draw_legend(scene);
+    if watermark {
+        canvas.draw_watermark();
+    }
     canvas.pixmap
 }
 
@@ -63,13 +79,23 @@ pub fn encode_png(pixmap: &Pixmap) -> Result<Vec<u8>, RenderError> {
         .map_err(|error| RenderError::Png(error.to_string()))
 }
 
-/// Rasterises and encodes in one step.
+/// Rasterises a scene at `scale` and encodes it as a PNG.
 ///
 /// # Errors
 ///
 /// Returns [`RenderError`] if the pixmap cannot be encoded.
 pub fn render_png(scene: &Scene, scale: f32) -> Result<Vec<u8>, RenderError> {
     let pixmap = rasterize(scene, scale);
+    encode_png(&pixmap)
+}
+
+/// Rasterises the free-tier preview (1×, watermarked) and encodes it as a PNG.
+///
+/// # Errors
+///
+/// Returns [`RenderError`] if the pixmap cannot be encoded.
+pub fn render_preview_png(scene: &Scene) -> Result<Vec<u8>, RenderError> {
+    let pixmap = rasterize_preview(scene);
     encode_png(&pixmap)
 }
 
@@ -260,6 +286,18 @@ impl Canvas {
         }
     }
 
+    /// Draws the free-tier watermark in the bottom-right corner.
+    ///
+    /// A preview is 1× and carries this badge; a Pro print export is unwatermarked and at 2–4×.
+    fn draw_watermark(&mut self) {
+        let size = 12.0;
+        let padding = 8.0 * self.scale;
+        let x = self.pixmap.width() as f32 - padding;
+        let y = self.pixmap.height() as f32 - padding - size * self.scale;
+        let color = [0.20, 0.24, 0.30, 0.35];
+        self.text("SlickBI preview", size, x, y, &color, Anchor::Right);
+    }
+
     fn bar(&mut self, bar: &Bar, color: [f32; 4]) {
         let rect = Rect::from_xywh(
             bar.x * self.scale,
@@ -416,14 +454,16 @@ fn glyph_pixmap(outlined: &OutlinedGlyph, color: [f32; 4]) -> Option<Pixmap> {
     let height = (bounds.height().ceil() as u32).max(1);
     let mut data = vec![0u8; (width * height * 4) as usize];
 
-    // tiny-skia pixmaps are premultiplied RGBA, so scale each channel by the coverage.
+    // tiny-skia pixmaps are premultiplied RGBA, so scale each channel by coverage times the
+    // colour's alpha. A fully opaque colour (the usual case) is unchanged by the alpha factor.
     outlined.draw(|x, y, coverage| {
         if x < width && y < height {
             let index = ((y * width) + x) as usize * 4;
-            data[index] = (color[0] * 255.0 * coverage) as u8;
-            data[index + 1] = (color[1] * 255.0 * coverage) as u8;
-            data[index + 2] = (color[2] * 255.0 * coverage) as u8;
-            data[index + 3] = (coverage * 255.0) as u8;
+            let alpha = coverage * color[3];
+            data[index] = (color[0] * 255.0 * alpha) as u8;
+            data[index + 1] = (color[1] * 255.0 * alpha) as u8;
+            data[index + 2] = (color[2] * 255.0 * alpha) as u8;
+            data[index + 3] = (alpha * 255.0) as u8;
         }
     });
 
@@ -591,5 +631,28 @@ mod tests {
             (r - 11).abs() < 30 && (g - 110).abs() < 30 && (b - 153).abs() < 30
         });
         assert!(found, "no pixels matched the first slice colour");
+    }
+
+    #[test]
+    fn a_preview_is_one_x_and_watermarked() {
+        let scene = bar_scene();
+        let plain = rasterize(&scene, 1.0);
+        let preview = rasterize_preview(&scene);
+
+        // A preview is 1×: the same pixels as a 1× render, plus the watermark.
+        assert_eq!(preview.width(), plain.width());
+        assert_eq!(preview.height(), plain.height());
+        assert_ne!(
+            preview.data(),
+            plain.data(),
+            "the watermark must change the image"
+        );
+    }
+
+    #[test]
+    fn a_preview_png_encodes() {
+        let png = render_preview_png(&bar_scene()).expect("renders");
+        assert!(png.len() > 1000);
+        assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
     }
 }
