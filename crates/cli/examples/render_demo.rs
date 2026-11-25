@@ -147,6 +147,7 @@ fn field(id: &str, name: &str, column: &str, role: Role, data_type: DataType) ->
         data_type,
         format: None,
         hidden: false,
+        folder: None,
         description: None,
     }
 }

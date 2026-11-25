@@ -637,6 +637,13 @@
             "null"
           ]
         },
+        "folder": {
+          "description": "The folder the field is shown under in the data pane, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "format": {
           "anyOf": [
             {

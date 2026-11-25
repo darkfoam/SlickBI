@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use eframe::egui;
-use slickbi_app::{Session, Shelf};
+use slickbi_app::{FieldInfo, Session, Shelf};
 use slickbi_connectors::DatabaseKind;
 use slickbi_scene::{Bar, LEGEND_HEIGHT, Scene, SeriesKind, TITLE_SPACE};
 use slickbi_spec::{Agg, Channel, DataType, FieldId, FilterOp, Mark, Role, Scalar};
@@ -102,6 +102,13 @@ struct SlickBiApp {
 
     description_field: Option<FieldId>,
     description_text: String,
+
+    rename_field: Option<FieldId>,
+    rename_text: String,
+    rename_error: Option<String>,
+    folder_field: Option<FieldId>,
+    folder_text: String,
+    show_hidden: bool,
 }
 
 impl SlickBiApp {
@@ -141,6 +148,12 @@ impl SlickBiApp {
             dark: false,
             description_field: None,
             description_text: String::new(),
+            rename_field: None,
+            rename_text: String::new(),
+            rename_error: None,
+            folder_field: None,
+            folder_text: String::new(),
+            show_hidden: false,
         }
     }
 
@@ -420,19 +433,10 @@ impl SlickBiApp {
                 .small(),
         );
         ui.add_space(4.0);
-        if !dimensions.is_empty() {
-            ui.label(egui::RichText::new("Dimensions").weak().small());
-            for (id, name) in dimensions {
-                self.field_card(ui, id, name, Role::Dimension);
-            }
-        }
+        ui.checkbox(&mut self.show_hidden, "Show hidden fields");
+        self.field_section(ui, "Dimensions", &dimensions);
         ui.add_space(6.0);
-        if !measures.is_empty() {
-            ui.label(egui::RichText::new("Measures").weak().small());
-            for (id, name) in measures {
-                self.field_card(ui, id, name, Role::Measure);
-            }
-        }
+        self.field_section(ui, "Measures", &measures);
 
         ui.add_space(10.0);
         if ui.button("ƒ  New calculation").clicked() {
@@ -442,11 +446,61 @@ impl SlickBiApp {
         }
     }
 
-    fn field_card(&mut self, ui: &mut egui::Ui, id: FieldId, name: String, role: Role) {
+    /// One role's fields, with unfiled fields first and each folder as a collapsible section.
+    fn field_section(&mut self, ui: &mut egui::Ui, title: &str, fields: &[FieldInfo]) {
+        if fields.is_empty() {
+            return;
+        }
+        ui.label(egui::RichText::new(title).weak().small());
+        let mut folders: Vec<Option<String>> = vec![None];
+        for field in fields {
+            if let Some(folder) = &field.folder
+                && !folders
+                    .iter()
+                    .any(|known| known.as_deref() == Some(folder.as_str()))
+            {
+                folders.push(Some(folder.clone()));
+            }
+        }
+        for folder in folders {
+            let members: Vec<&FieldInfo> = fields
+                .iter()
+                .filter(|field| field.folder == folder && (self.show_hidden || !field.hidden))
+                .collect();
+            if members.is_empty() {
+                continue;
+            }
+            match folder {
+                Some(name) => {
+                    egui::CollapsingHeader::new(
+                        egui::RichText::new(name.as_str()).small().strong(),
+                    )
+                    .id_salt(("field-folder", title, name.as_str()))
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        for field in members {
+                            self.field_card(ui, field);
+                        }
+                    });
+                }
+                None => {
+                    for field in members {
+                        self.field_card(ui, field);
+                    }
+                }
+            }
+        }
+    }
+
+    fn field_card(&mut self, ui: &mut egui::Ui, field: &FieldInfo) {
+        let id = field.id.clone();
         let payload = DragField { field: id.clone() };
         let inner = ui.dnd_drag_source(egui::Id::unique(("field", id.as_str())), payload, |ui| {
-            let button =
-                egui::Button::new(name.clone()).min_size(egui::vec2(ui.available_width(), 26.0));
+            let mut text = egui::RichText::new(field.name.clone());
+            if field.hidden {
+                text = text.weak().italics();
+            }
+            let button = egui::Button::new(text).min_size(egui::vec2(ui.available_width(), 26.0));
             ui.add(button)
         });
         let mut response = inner.inner;
@@ -454,7 +508,7 @@ impl SlickBiApp {
             response = response.on_hover_text(description);
         }
         if response.clicked() {
-            let shelf = if role == Role::Measure {
+            let shelf = if field.role == Role::Measure {
                 Shelf::Y
             } else {
                 Shelf::X
@@ -462,6 +516,34 @@ impl SlickBiApp {
             self.session.assign(shelf, &id);
         }
         response.context_menu(|ui| {
+            if ui.button("Rename…").clicked() {
+                self.open_rename(&id);
+                ui.close();
+            }
+            if ui.button("Folder…").clicked() {
+                self.open_folder(&id);
+                ui.close();
+            }
+            if field.folder.is_some() && ui.button("Remove from folder").clicked() {
+                self.session.set_field_folder(&id, None);
+                ui.close();
+            }
+            if ui
+                .button(if field.hidden { "Unhide" } else { "Hide" })
+                .clicked()
+            {
+                self.session.set_field_hidden(&id, !field.hidden);
+                ui.close();
+            }
+            if ui.button("Move up").clicked() {
+                self.session.move_field(&id, -1);
+                ui.close();
+            }
+            if ui.button("Move down").clicked() {
+                self.session.move_field(&id, 1);
+                ui.close();
+            }
+            ui.separator();
             if ui.button("Format…").clicked() {
                 self.open_format(&id);
                 ui.close();
@@ -490,6 +572,19 @@ impl SlickBiApp {
                 }
             });
         });
+    }
+
+    /// Loads a field's name into the rename editor.
+    fn open_rename(&mut self, id: &FieldId) {
+        self.rename_text = self.field_name(id).unwrap_or_default();
+        self.rename_error = None;
+        self.rename_field = Some(id.clone());
+    }
+
+    /// Loads a field's folder into the folder editor.
+    fn open_folder(&mut self, id: &FieldId) {
+        self.folder_text = self.session.field_folder(id).unwrap_or_default();
+        self.folder_field = Some(id.clone());
     }
 
     /// Loads a field's description into the editor and opens it.
@@ -619,7 +714,7 @@ impl SlickBiApp {
                             .field_groups()
                             .0
                             .first()
-                            .map(|(id, _)| id.clone());
+                            .map(|field| field.id.clone());
                     }
                 }
             });
@@ -1400,7 +1495,7 @@ impl SlickBiApp {
             .resizable(false)
             .default_width(360.0)
             .show(ctx, |ui| {
-                let fields: Vec<(FieldId, String)> = {
+                let fields: Vec<FieldInfo> = {
                     let (d, m) = self.session.field_groups();
                     d.into_iter().chain(m).collect()
                 };
@@ -1410,13 +1505,17 @@ impl SlickBiApp {
                     .selected_text(
                         fields
                             .iter()
-                            .find(|(id, _)| Some(id) == selected.as_ref())
-                            .map(|(_, n)| n.clone())
+                            .find(|field| Some(&field.id) == selected.as_ref())
+                            .map(|field| field.name.clone())
                             .unwrap_or_else(|| "Field".to_owned()),
                     )
                     .show_ui(ui, |ui| {
-                        for (id, name) in &fields {
-                            ui.selectable_value(&mut self.filter_field, Some(id.clone()), name);
+                        for field in &fields {
+                            ui.selectable_value(
+                                &mut self.filter_field,
+                                Some(field.id.clone()),
+                                &field.name,
+                            );
                         }
                     });
 
@@ -1518,6 +1617,93 @@ impl SlickBiApp {
             });
         if !open {
             self.format_field = None;
+        }
+    }
+
+    fn rename_window(&mut self, ctx: &egui::Context) {
+        let Some(field) = self.rename_field.clone() else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new("Rename field")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(320.0)
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new("Name").small().weak());
+                let response = ui.text_edit_singleline(&mut self.rename_text);
+                if ui.input(|input| input.key_pressed(egui::Key::Enter)) && response.lost_focus() {
+                    match self.session.rename_field(&field, &self.rename_text) {
+                        Ok(()) => self.rename_field = None,
+                        Err(error) => self.rename_error = Some(error.to_string()),
+                    }
+                }
+                if let Some(error) = &self.rename_error {
+                    ui.add_space(4.0);
+                    ui.colored_label(egui::Color32::from_rgb(0xB0, 0x30, 0x20), error);
+                }
+                ui.label(
+                    egui::RichText::new("Calculations that use the old name are updated.")
+                        .small()
+                        .weak(),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Rename").clicked() {
+                        match self.session.rename_field(&field, &self.rename_text) {
+                            Ok(()) => self.rename_field = None,
+                            Err(error) => self.rename_error = Some(error.to_string()),
+                        }
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.rename_field = None;
+                    }
+                });
+            });
+        if !open {
+            self.rename_field = None;
+        }
+    }
+
+    fn folder_window(&mut self, ctx: &egui::Context) {
+        let Some(field) = self.folder_field.clone() else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new("Field folder")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(320.0)
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new("Folder").small().weak());
+                ui.text_edit_singleline(&mut self.folder_text);
+                ui.label(
+                    egui::RichText::new(
+                        "Fields with the same folder are grouped in the data pane.",
+                    )
+                    .small()
+                    .weak(),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Move").clicked() {
+                        self.session
+                            .set_field_folder(&field, Some(self.folder_text.as_str()));
+                        self.folder_field = None;
+                    }
+                    if ui.button("Remove").clicked() {
+                        self.session.set_field_folder(&field, None);
+                        self.folder_field = None;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.folder_field = None;
+                    }
+                });
+            });
+        if !open {
+            self.folder_field = None;
         }
     }
 
@@ -1877,6 +2063,8 @@ impl eframe::App for SlickBiApp {
         self.format_window(ui.ctx());
         self.connect_window(ui.ctx());
         self.sheet_window(ui.ctx());
+        self.rename_window(ui.ctx());
+        self.folder_window(ui.ctx());
         self.description_window(ui.ctx());
     }
 }

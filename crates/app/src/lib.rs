@@ -41,8 +41,20 @@ pub enum Shelf {
     Tooltip,
 }
 
-/// A field as owned data for the data pane: its identifier and display name.
-pub type FieldInfo = (FieldId, String);
+/// A field as owned data for the data pane: its identifier, display name, folder and visibility.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldInfo {
+    /// The field's identifier.
+    pub id: FieldId,
+    /// The name shown in the pane.
+    pub name: String,
+    /// The field's role, which decides the shelf a click places it on.
+    pub role: Role,
+    /// The folder it is grouped under, if any.
+    pub folder: Option<String>,
+    /// Whether the pane hides it until "Show hidden" is on.
+    pub hidden: bool,
+}
 
 /// The smallest width a report element can be resized to, in points.
 const MIN_ELEMENT_WIDTH: f64 = 80.0;
@@ -137,7 +149,7 @@ impl Session {
         self.workbook.reports.get(self.active_report)
     }
 
-    /// The fields of the active model, split into dimensions and measures, as owned `(id, name)`.
+    /// The fields of the active model, split into dimensions and measures, including hidden ones.
     pub fn field_groups(&self) -> (Vec<FieldInfo>, Vec<FieldInfo>) {
         let Some(worksheet) = self.active_worksheet() else {
             return (Vec::new(), Vec::new());
@@ -152,10 +164,13 @@ impl Session {
         };
         let (mut dimensions, mut measures) = (Vec::new(), Vec::new());
         for field in &model.fields {
-            if field.hidden {
-                continue;
-            }
-            let info = (field.id.clone(), field.name.clone());
+            let info = FieldInfo {
+                id: field.id.clone(),
+                name: field.name.clone(),
+                role: field.role,
+                folder: field.folder.clone(),
+                hidden: field.hidden,
+            };
             match field.role {
                 Role::Measure => measures.push(info),
                 Role::Dimension => dimensions.push(info),
@@ -630,6 +645,7 @@ impl Session {
             data_type,
             format: None,
             hidden: false,
+            folder: None,
             description: None,
         };
         model.fields.push(field);
@@ -696,6 +712,147 @@ impl Session {
         {
             candidate.data_type = data_type;
         }
+        self.refresh();
+    }
+
+    /// The folder a field is shown under, if any.
+    pub fn field_folder(&self, field: &FieldId) -> Option<String> {
+        self.active_field(field)
+            .and_then(|field| field.folder.clone())
+    }
+
+    /// Whether a field is hidden from the data pane.
+    pub fn field_hidden(&self, field: &FieldId) -> bool {
+        self.active_field(field).is_some_and(|field| field.hidden)
+    }
+
+    /// The field in the active model, if it exists.
+    fn active_field(&self, field: &FieldId) -> Option<&Field> {
+        let worksheet = self.active_worksheet()?;
+        let model = self
+            .workbook
+            .models
+            .iter()
+            .find(|model| model.id == worksheet.model)?;
+        model.fields.iter().find(|candidate| &candidate.id == field)
+    }
+
+    /// The index of the active worksheet's model.
+    fn active_model_index(&self) -> Option<usize> {
+        let worksheet = self.active_worksheet()?;
+        self.workbook
+            .models
+            .iter()
+            .position(|model| model.id == worksheet.model)
+    }
+
+    /// Renames a field and rewrites every calculation that referenced its old name.
+    ///
+    /// Column fields only change their display name; a calculation's `[Name]` reference is text, so
+    /// renaming a field it reads would otherwise leave the calculation pointing at nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::EmptyFieldName`] for a blank name,
+    /// [`SessionError::DuplicateFieldName`] when another field already uses it, and
+    /// [`SessionError::UnknownField`] when the field is not in the active model.
+    pub fn rename_field(&mut self, field: &FieldId, name: &str) -> Result<(), SessionError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(SessionError::EmptyFieldName);
+        }
+        let Some(index) = self.active_model_index() else {
+            return Err(SessionError::NoWorksheet);
+        };
+        let model = &mut self.workbook.models[index];
+        let Some(position) = model
+            .fields
+            .iter()
+            .position(|candidate| &candidate.id == field)
+        else {
+            return Err(SessionError::UnknownField(field.clone()));
+        };
+        if model
+            .fields
+            .iter()
+            .any(|candidate| &candidate.id != field && candidate.name == name)
+        {
+            return Err(SessionError::DuplicateFieldName(name.to_owned()));
+        }
+        let old = model.fields[position].name.clone();
+        if old == name {
+            return Ok(());
+        }
+        model.fields[position].name = name.to_owned();
+        for candidate in &mut model.fields {
+            if let FieldSource::Expression { expression } = &mut candidate.source {
+                *expression = rewrite_field_reference(expression, &old, name);
+            }
+        }
+        self.refresh();
+        Ok(())
+    }
+
+    /// Hides or shows a field in the data pane. Hidden fields still resolve in a worksheet.
+    pub fn set_field_hidden(&mut self, field: &FieldId, hidden: bool) {
+        if let Some(index) = self.active_model_index()
+            && let Some(candidate) = self.workbook.models[index]
+                .fields
+                .iter_mut()
+                .find(|candidate| &candidate.id == field)
+        {
+            candidate.hidden = hidden;
+        }
+        self.refresh();
+    }
+
+    /// Moves a field into a folder, or out of one when `folder` is `None` or empty.
+    pub fn set_field_folder(&mut self, field: &FieldId, folder: Option<&str>) {
+        let folder = folder
+            .map(str::trim)
+            .filter(|folder| !folder.is_empty())
+            .map(str::to_owned);
+        if let Some(index) = self.active_model_index()
+            && let Some(candidate) = self.workbook.models[index]
+                .fields
+                .iter_mut()
+                .find(|candidate| &candidate.id == field)
+        {
+            candidate.folder = folder;
+        }
+        self.refresh();
+    }
+
+    /// Moves a field one place up or down within its role and folder.
+    pub fn move_field(&mut self, field: &FieldId, delta: isize) {
+        let Some(index) = self.active_model_index() else {
+            return;
+        };
+        let model = &mut self.workbook.models[index];
+        let Some(position) = model
+            .fields
+            .iter()
+            .position(|candidate| &candidate.id == field)
+        else {
+            return;
+        };
+        let role = model.fields[position].role;
+        let folder = model.fields[position].folder.clone();
+        let group: Vec<usize> = model
+            .fields
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| candidate.role == role && candidate.folder == folder)
+            .map(|(index, _)| index)
+            .collect();
+        let Some(at) = group.iter().position(|index| *index == position) else {
+            return;
+        };
+        let target = at as isize + delta;
+        if target < 0 || target >= group.len() as isize {
+            return;
+        }
+        model.fields.swap(position, group[target as usize]);
         self.refresh();
     }
 
@@ -1185,6 +1342,67 @@ impl Drop for Session {
     }
 }
 
+/// Rewrites `[old]` field references in a calculation, leaving text literals and escaped `]]`
+/// brackets intact.
+fn rewrite_field_reference(expression: &str, old: &str, new: &str) -> String {
+    let characters: Vec<char> = expression.chars().collect();
+    let mut out = String::with_capacity(expression.len());
+    let mut index = 0usize;
+    while index < characters.len() {
+        match characters[index] {
+            '\'' => {
+                out.push('\'');
+                index += 1;
+                while index < characters.len() {
+                    let character = characters[index];
+                    out.push(character);
+                    index += 1;
+                    if character == '\'' {
+                        if index < characters.len() && characters[index] == '\'' {
+                            out.push('\'');
+                            index += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            '[' => {
+                let mut name = String::new();
+                index += 1;
+                let mut closed = false;
+                while index < characters.len() {
+                    if characters[index] == ']' {
+                        if index + 1 < characters.len() && characters[index + 1] == ']' {
+                            name.push(']');
+                            index += 2;
+                        } else {
+                            index += 1;
+                            closed = true;
+                            break;
+                        }
+                    } else {
+                        name.push(characters[index]);
+                        index += 1;
+                    }
+                }
+                out.push('[');
+                if closed && name.trim() == old {
+                    out.push_str(&new.replace(']', "]]"));
+                } else {
+                    out.push_str(&name.replace(']', "]]"));
+                }
+                out.push(']');
+            }
+            other => {
+                out.push(other);
+                index += 1;
+            }
+        }
+    }
+    out
+}
+
 fn database_source(
     kind: slickbi_connectors::DatabaseKind,
     location: &str,
@@ -1308,6 +1526,15 @@ pub enum SessionError {
     /// There is no active worksheet to act on.
     #[error("no worksheet is active")]
     NoWorksheet,
+    /// A field name was blank.
+    #[error("a field name cannot be empty")]
+    EmptyFieldName,
+    /// Another field already uses this name.
+    #[error("a field named '{0}' already exists")]
+    DuplicateFieldName(String),
+    /// The field is not in the active model.
+    #[error("the field is not in the active model")]
+    UnknownField(FieldId),
     /// The file extension is not a source this build reads.
     #[error("unsupported file type: {0}")]
     UnsupportedSource(String),
@@ -1349,6 +1576,146 @@ mod tests {
         assert_eq!(measures.len(), 2);
         assert!(session.has_source());
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn renaming_a_field_rewrites_calculations_and_rejects_duplicates() {
+        let (mut session, path) = loaded();
+        session
+            .add_calculated_field("Double", "[amount] * 2")
+            .expect("adds");
+
+        session
+            .rename_field(&FieldId::new("amount"), "Sales")
+            .expect("renames");
+        let amount = session.workbook().models[0]
+            .fields
+            .iter()
+            .find(|field| field.id == FieldId::new("amount"))
+            .expect("amount");
+        assert_eq!(amount.name, "Sales");
+        let model = &session.workbook().models[0];
+        let double = model
+            .fields
+            .iter()
+            .find(|field| field.name == "Double")
+            .expect("Double");
+        match &double.source {
+            FieldSource::Expression { expression } => {
+                assert_eq!(expression, "[Sales] * 2", "the reference is rewritten");
+            }
+            other => panic!("a calculation: {other:?}"),
+        }
+
+        let error = session
+            .rename_field(&FieldId::new("amount"), "region")
+            .expect_err("a duplicate name is refused");
+        assert!(matches!(error, SessionError::DuplicateFieldName(_)));
+        let amount = session.workbook().models[0]
+            .fields
+            .iter()
+            .find(|field| field.id == FieldId::new("amount"))
+            .expect("amount");
+        assert_eq!(amount.name, "Sales", "the refused rename changes nothing");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn hiding_a_field_keeps_it_chartable() {
+        let (mut session, path) = loaded();
+        session.set_field_hidden(&FieldId::new("region"), true);
+        let (dimensions, _) = session.field_groups();
+        let region = dimensions
+            .iter()
+            .find(|field| field.id == FieldId::new("region"))
+            .expect("the hidden field is still listed with its flag");
+        assert!(region.hidden);
+        assert!(session.field_hidden(&FieldId::new("region")));
+
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        assert!(session.scene().is_some(), "a hidden field still resolves");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn fields_reorder_within_their_group_and_move_into_folders() {
+        let (mut session, path) = loaded();
+        let order = |session: &Session| -> Vec<String> {
+            session
+                .field_groups()
+                .1
+                .iter()
+                .map(|field| field.name.clone())
+                .collect()
+        };
+        assert_eq!(order(&session), vec!["amount", "units"]);
+        session.move_field(&FieldId::new("units"), -1);
+        assert_eq!(order(&session), vec!["units", "amount"]);
+        session.move_field(&FieldId::new("units"), -1);
+        assert_eq!(
+            order(&session),
+            vec!["units", "amount"],
+            "the first stays first"
+        );
+
+        session.set_field_folder(&FieldId::new("amount"), Some("Money"));
+        assert_eq!(
+            session.field_folder(&FieldId::new("amount")).as_deref(),
+            Some("Money")
+        );
+        session.set_field_folder(&FieldId::new("amount"), Some("   "));
+        assert_eq!(session.field_folder(&FieldId::new("amount")), None);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn names_folders_and_visibility_round_trip() {
+        let (mut session, path) = loaded();
+        session
+            .rename_field(&FieldId::new("amount"), "Sales")
+            .expect("renames");
+        session.set_field_folder(&FieldId::new("amount"), Some("Money"));
+        session.set_field_hidden(&FieldId::new("units"), true);
+
+        let scz = temp("m02.scz");
+        session.save(&scz).expect("saves");
+        let mut reopened = Session::new();
+        reopened.open(&scz).expect("opens");
+
+        let (_, measures) = reopened.field_groups();
+        let sales = measures
+            .iter()
+            .find(|field| field.id == FieldId::new("amount"))
+            .expect("Sales");
+        assert_eq!(sales.name, "Sales");
+        assert_eq!(sales.folder.as_deref(), Some("Money"));
+        let units = measures
+            .iter()
+            .find(|field| field.id == FieldId::new("units"))
+            .expect("units");
+        assert!(units.hidden);
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&scz).ok();
+    }
+
+    #[test]
+    fn a_reference_rewrite_leaves_text_and_other_fields_alone() {
+        assert_eq!(
+            rewrite_field_reference("[amount] * 2 + [amount2]", "amount", "Sales"),
+            "[Sales] * 2 + [amount2]"
+        );
+        assert_eq!(
+            rewrite_field_reference("'[amount]'", "amount", "Sales"),
+            "'[amount]'",
+            "text is not a reference"
+        );
+        assert_eq!(
+            rewrite_field_reference("[a]]b] + 1", "a]b", "c]d"),
+            "[c]]d] + 1",
+            "escaped brackets survive"
+        );
     }
 
     #[test]
@@ -1452,11 +1819,11 @@ mod tests {
 
         let (dimensions, measures) = session.field_groups();
         assert!(
-            dimensions.iter().any(|(_, name)| name == "region"),
+            dimensions.iter().any(|field| field.name == "region"),
             "dimensions"
         );
         assert!(
-            measures.iter().any(|(_, name)| name == "amount"),
+            measures.iter().any(|field| field.name == "amount"),
             "measures"
         );
         assert!(session.has_source());
@@ -1610,7 +1977,7 @@ mod tests {
             .add_calculated_field("Double", "[amount] * 2")
             .expect("adds");
         let (_, measures) = session.field_groups();
-        assert!(measures.iter().any(|(_, name)| name == "Double"));
+        assert!(measures.iter().any(|field| field.name == "Double"));
 
         session.assign(Shelf::X, &FieldId::new("region"));
         session.assign(Shelf::Y, &FieldId::new("Double"));

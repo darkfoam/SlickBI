@@ -657,6 +657,7 @@ mod tests {
             data_type,
             format: None,
             hidden: false,
+            folder: None,
             description: None,
         }
     }
@@ -679,6 +680,7 @@ mod tests {
             data_type,
             format: None,
             hidden: false,
+            folder: None,
             description: None,
         }
     }
@@ -973,6 +975,7 @@ mod tests {
             data_type: DataType::Text,
             format: None,
             hidden: false,
+            folder: None,
             description: None,
         });
         document.fields.push(Field {
@@ -986,6 +989,7 @@ mod tests {
             data_type: DataType::Number,
             format: None,
             hidden: false,
+            folder: None,
             description: None,
         });
 
@@ -1009,6 +1013,7 @@ mod tests {
             data_type: DataType::Number,
             format: None,
             hidden: false,
+            folder: None,
             description: None,
         });
         document.fields.push(Field {
@@ -1022,6 +1027,7 @@ mod tests {
             data_type: DataType::Number,
             format: None,
             hidden: false,
+            folder: None,
             description: None,
         });
 

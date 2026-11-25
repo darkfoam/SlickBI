@@ -171,6 +171,9 @@ pub struct Field {
     /// Whether the field is hidden from the data pane.
     #[serde(default)]
     pub hidden: bool,
+    /// The folder the field is shown under in the data pane, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
     /// A short explanation, shown in tooltips and offered to external agents through MCP.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -313,5 +316,21 @@ mod tests {
         }"#;
         let relationship: Relationship = serde_json::from_str(json).expect("deserialize");
         assert_eq!(relationship.cross_filter, CrossFilter::Single);
+    }
+
+    #[test]
+    fn a_field_without_a_folder_or_hidden_flag_opens_with_defaults() {
+        let json = r#"{
+            "id": "amount",
+            "name": "Amount",
+            "table": "data",
+            "source": {"kind": "column", "column": "col_1"},
+            "role": "measure",
+            "data_type": "number"
+        }"#;
+        let field: Field = serde_json::from_str(json).expect("an older field still opens");
+        assert!(field.folder.is_none());
+        assert!(!field.hidden);
+        assert!(field.format.is_none());
     }
 }

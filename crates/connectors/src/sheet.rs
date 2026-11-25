@@ -409,6 +409,7 @@ fn build(raw: RawSheet) -> Result<SheetTable, ConnectorError> {
             data_type,
             format: None,
             hidden: false,
+            folder: None,
             description: None,
         });
     }

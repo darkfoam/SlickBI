@@ -147,6 +147,7 @@ fn build(kind: DatabaseKind, raw: RawTable) -> DatabaseTable {
             data_type,
             format: None,
             hidden: false,
+            folder: None,
             description: None,
         });
         columns.push((column.name.clone(), storage_type));

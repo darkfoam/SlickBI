@@ -205,6 +205,7 @@ fn describe_model(engine: &Engine, source: &str) -> Result<DataModel, ConnectorE
                 data_type,
                 format: None,
                 hidden: false,
+                folder: None,
                 description: None,
             };
 

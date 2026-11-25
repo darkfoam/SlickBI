@@ -96,6 +96,7 @@ fn field(id: &str, name: &str, column: &str, role: Role, data_type: DataType) ->
         data_type,
         format: None,
         hidden: false,
+        folder: None,
         description: None,
     }
 }
@@ -112,6 +113,7 @@ fn calculated(id: &str, name: &str, expression: &str, role: Role, data_type: Dat
         data_type,
         format: None,
         hidden: false,
+        folder: None,
         description: None,
     }
 }
@@ -477,6 +479,7 @@ fn multiple_tables_are_rejected_until_relationships_land() {
                 data_type: DataType::Text,
                 format: None,
                 hidden: false,
+                folder: None,
                 description: None,
             },
         ],
