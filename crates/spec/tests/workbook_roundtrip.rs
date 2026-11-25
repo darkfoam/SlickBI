@@ -213,20 +213,25 @@ fn referencing_reports_finds_every_user_of_a_worksheet() {
 }
 
 #[test]
-fn a_report_that_loses_its_worksheet_is_invalid() {
+fn a_report_can_outlive_its_worksheet() {
     let mut workbook = sample_workbook();
     workbook
         .worksheets
         .retain(|ws| ws.id.as_str() != "ws-trend");
 
-    let error = workbook.validate().expect_err("must fail");
-    assert_eq!(
-        error,
-        ValidationError::UnknownWorksheet {
-            report: "report-annual".into(),
-            worksheet: "ws-trend".into(),
-        }
-    );
+    // Deleting a worksheet must not make the report invalid: the report keeps its reference and
+    // the product renders a placeholder (T05, ARCHITECTURE.md: "a missing worksheet resolves to a
+    // placeholder element, not an error state that destroys the report").
+    workbook
+        .validate()
+        .expect("a dangling report reference is allowed");
+
+    let ids: Vec<&str> = workbook.reports[0]
+        .referenced_worksheets()
+        .iter()
+        .map(|id| id.as_str())
+        .collect();
+    assert!(ids.contains(&"ws-trend"), "the reference survives: {ids:?}");
 }
 
 #[test]
@@ -284,13 +289,18 @@ fn a_worksheet_using_an_unknown_field_is_rejected() {
 #[test]
 fn load_rejects_a_document_that_breaks_invariants() {
     let mut workbook = sample_workbook();
-    workbook.worksheets.clear();
+    // Two worksheets with the same id is an invariant violation.
+    let duplicate = workbook.worksheets[0].clone();
+    workbook.worksheets.push(duplicate);
 
     let json = workbook.to_json_string().expect("serialise");
     let error = Workbook::load_str(&json).expect_err("must fail");
     assert!(matches!(
         error,
-        slickbi_spec::FormatError::Invalid(ValidationError::UnknownWorksheet { .. })
+        slickbi_spec::FormatError::Invalid(ValidationError::DuplicateId {
+            entity: "worksheet",
+            ..
+        })
     ));
 }
 

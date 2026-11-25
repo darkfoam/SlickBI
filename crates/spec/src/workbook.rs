@@ -248,12 +248,6 @@ impl Workbook {
             }
         }
 
-        let worksheets: HashSet<&str> = self
-            .worksheets
-            .iter()
-            .map(|worksheet| worksheet.id.as_str())
-            .collect();
-
         for report in &self.reports {
             if report.name.trim().is_empty() {
                 return Err(ValidationError::EmptyName {
@@ -277,15 +271,9 @@ impl Workbook {
                         element: element.id.to_string(),
                     });
                 }
-
-                if let Some(worksheet) = element.worksheet()
-                    && !worksheets.contains(worksheet.as_str())
-                {
-                    return Err(ValidationError::UnknownWorksheet {
-                        report: report.id.to_string(),
-                        worksheet: worksheet.to_string(),
-                    });
-                }
+                // A chart element may reference a worksheet that has since been deleted. That is
+                // intentional: the product keeps the report and renders a placeholder, so the
+                // reference is not an invariant violation (T05).
             }
         }
 
@@ -478,14 +466,6 @@ pub enum ValidationError {
         table: String,
         /// The missing column.
         column: String,
-    },
-    /// A report displays a worksheet that does not exist.
-    #[error("report '{report}' displays worksheet '{worksheet}', which does not exist")]
-    UnknownWorksheet {
-        /// The report.
-        report: String,
-        /// The missing worksheet.
-        worksheet: String,
     },
     /// A report's canvas has no area.
     #[error("report '{report}' has a canvas with no area")]

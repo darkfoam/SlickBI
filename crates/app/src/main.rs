@@ -1085,29 +1085,27 @@ impl SlickBiApp {
                         show_legend: chart.overrides.show_legend.unwrap_or(true),
                     };
                     let scaled = (chart_rect.width().max(1.0), chart_rect.height().max(1.0));
-                    let scene = self
+                    let placeholder = |text: &str| {
+                        painter.rect_filled(
+                            chart_rect,
+                            6.0,
+                            egui::Color32::from_rgba_unmultiplied(0, 0, 0, 12),
+                        );
+                        painter.text(
+                            chart_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            text,
+                            egui::FontId::proportional(13.0),
+                            egui::Color32::from_gray(140),
+                        );
+                    };
+                    match self
                         .session
                         .scene_for_with(&chart.worksheet, scaled, options)
-                        .ok()
-                        .flatten();
-                    match scene {
-                        Some(scene) => {
-                            draw_scene_in(ui, &scene, chart_rect);
-                        }
-                        None => {
-                            painter.rect_filled(
-                                chart_rect,
-                                6.0,
-                                egui::Color32::from_rgba_unmultiplied(0, 0, 0, 12),
-                            );
-                            painter.text(
-                                chart_rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                "No shelves yet",
-                                egui::FontId::proportional(13.0),
-                                egui::Color32::from_gray(140),
-                            );
-                        }
+                    {
+                        Ok(Some(scene)) => draw_scene_in(ui, &scene, chart_rect),
+                        Ok(None) => placeholder("No shelves yet"),
+                        Err(_) => placeholder("Worksheet missing"),
                     }
                     if chart.overrides.border == Some(true) {
                         painter.rect_stroke(

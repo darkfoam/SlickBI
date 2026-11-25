@@ -1235,6 +1235,45 @@ mod tests {
         std::fs::remove_file(&scz_path).ok();
     }
 
+    #[test]
+    fn a_report_outlives_a_deleted_worksheet_through_save_and_reopen() {
+        let path = temp("outlive.csv");
+        csv(&path);
+        let scz_path = temp("outlive.scz");
+
+        let mut session = Session::new();
+        session.load_file(&path, SourceFormat::Csv).expect("loads");
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+
+        session.add_report("Board");
+        let worksheet = session.active_worksheet().expect("ws").id.clone();
+        session.add_chart_to_report(&worksheet);
+
+        // Delete the worksheet the report uses; the element stays for a placeholder.
+        let index = session
+            .workbook()
+            .worksheets
+            .iter()
+            .position(|w| w.id == worksheet)
+            .expect("worksheet");
+        session.remove_worksheet(index);
+        assert_eq!(session.reports()[0].elements.len(), 1);
+
+        // Saving and reopening must not reject the dangling reference (T05).
+        session.save(&scz_path).expect("saves");
+        let mut reopened = Session::new();
+        reopened
+            .open(&scz_path)
+            .expect("a dangling reference must not block reopen");
+        assert_eq!(reopened.reports()[0].elements.len(), 1);
+        // The element resolves to a placeholder (an error to draw), not a lost report.
+        assert!(reopened.scene_for(&worksheet, (200.0, 150.0)).is_err());
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&scz_path).ok();
+    }
+
     fn agg_fixture() -> (Session, PathBuf) {
         let path = temp("agg.csv");
         std::fs::write(&path, "region,amount\nEMEA,10\nEMEA,20\nAPAC,30\n").expect("writes csv");

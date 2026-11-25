@@ -98,7 +98,7 @@ that needs different data is a forked worksheet.
 | T02 | Worksheet navigator: search, jump, thumbnails | F | 0.2.0 | planned |
 | T03 | "Used in" indicator: which reports reference this worksheet | F | 0.0.3 | done |
 | T04 | Fork a worksheet into an independent copy | F | 0.0.2 | done |
-| T05 | Referential integrity: warn before deleting a referenced worksheet, show a placeholder in reports | F | 0.0.3 | in progress |
+| T05 | Referential integrity: warn before deleting a referenced worksheet, show a placeholder in reports | F | 0.0.3 | done |
 | T06 | Jump from a report element to its source worksheet | F | 0.0.3 | planned |
 
 ## Reports
