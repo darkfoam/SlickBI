@@ -28,6 +28,8 @@ pub enum Mark {
     Text,
     /// An arc, used by pie and donut charts.
     Arc,
+    /// A donut: an arc with a hole in the middle.
+    Donut,
     /// A horizontal or vertical rule.
     Rule,
 }

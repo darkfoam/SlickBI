@@ -286,18 +286,37 @@ fn area_polygon(points: &[slickbi_scene::Point], baseline: f32) -> String {
     out
 }
 
-/// An SVG path for a pie wedge, walked in short segments like the rasteriser.
+/// An SVG path for a pie or donut wedge, walked in short segments like the rasteriser.
 fn arc_path(slice: &slickbi_scene::ArcSlice) -> String {
     let sweep = slice.end - slice.start;
     let steps = ((sweep.abs() / std::f32::consts::TAU) * 90.0)
         .ceil()
         .max(2.0) as usize;
-    let mut out = format!("M {:.2} {:.2}", slice.center.x, slice.center.y);
-    for step in 0..=steps {
-        let angle = slice.start + sweep * (step as f32 / steps as f32);
-        let x = slice.center.x + slice.radius * angle.sin();
-        let y = slice.center.y - slice.radius * angle.cos();
+    let point = |angle: f32, radius: f32| {
+        (
+            slice.center.x + radius * angle.sin(),
+            slice.center.y - radius * angle.cos(),
+        )
+    };
+    let angle_at = |step: usize| slice.start + sweep * (step as f32 / steps as f32);
+
+    let mut out = if slice.inner_radius <= 0.0 {
+        format!("M {:.2} {:.2}", slice.center.x, slice.center.y)
+    } else {
+        let (x, y) = point(slice.start, slice.radius);
+        format!("M {x:.2} {y:.2}")
+    };
+
+    let first = if slice.inner_radius <= 0.0 { 0 } else { 1 };
+    for step in first..=steps {
+        let (x, y) = point(angle_at(step), slice.radius);
         out.push_str(&format!(" L {x:.2} {y:.2}"));
+    }
+    if slice.inner_radius > 0.0 {
+        for step in (0..=steps).rev() {
+            let (x, y) = point(angle_at(step), slice.inner_radius);
+            out.push_str(&format!(" L {x:.2} {y:.2}"));
+        }
     }
     out.push_str(" Z");
     out
@@ -459,13 +478,32 @@ impl Canvas {
         let steps = ((sweep.abs() / std::f32::consts::TAU) * 180.0)
             .ceil()
             .max(1.0) as usize;
+        let point = |angle: f32, radius: f32| {
+            (
+                slice.center.x + radius * angle.sin(),
+                slice.center.y - radius * angle.cos(),
+            )
+        };
+        let angle_at = |step: usize| slice.start + sweep * (step as f32 / steps as f32);
+
         let mut path = PathBuilder::new();
-        path.move_to(slice.center.x * self.scale, slice.center.y * self.scale);
-        for step in 0..=steps {
-            let angle = slice.start + sweep * (step as f32 / steps as f32);
-            let x = slice.center.x + slice.radius * angle.sin();
-            let y = slice.center.y - slice.radius * angle.cos();
-            path.line_to(x * self.scale, y * self.scale);
+        if slice.inner_radius <= 0.0 {
+            path.move_to(slice.center.x * self.scale, slice.center.y * self.scale);
+            for step in 0..=steps {
+                let (x, y) = point(angle_at(step), slice.radius);
+                path.line_to(x * self.scale, y * self.scale);
+            }
+        } else {
+            let (x, y) = point(slice.start, slice.radius);
+            path.move_to(x * self.scale, y * self.scale);
+            for step in 1..=steps {
+                let (x, y) = point(angle_at(step), slice.radius);
+                path.line_to(x * self.scale, y * self.scale);
+            }
+            for step in (0..=steps).rev() {
+                let (x, y) = point(angle_at(step), slice.inner_radius);
+                path.line_to(x * self.scale, y * self.scale);
+            }
         }
         path.close();
         if let Some(path) = path.finish() {

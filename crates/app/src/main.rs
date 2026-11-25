@@ -309,6 +309,7 @@ impl SlickBiApp {
                 (Mark::Area, "Area"),
                 (Mark::Point, "Point"),
                 (Mark::Arc, "Pie"),
+                (Mark::Donut, "Donut"),
             ] {
                 let selected = self
                     .session
@@ -2061,18 +2062,41 @@ fn paint_arc(
     let steps = ((sweep.abs() / std::f32::consts::TAU) * 90.0)
         .ceil()
         .max(2.0) as usize;
-    let center = origin + egui::vec2(slice.center.x, slice.center.y);
+    let point = |angle: f32, radius: f32| {
+        origin
+            + egui::vec2(
+                slice.center.x + radius * angle.sin(),
+                slice.center.y - radius * angle.cos(),
+            )
+    };
 
+    if slice.inner_radius <= 0.0 {
+        let center = origin + egui::vec2(slice.center.x, slice.center.y);
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(center, color);
+        for step in 0..=steps {
+            let angle = slice.start + sweep * (step as f32 / steps as f32);
+            mesh.colored_vertex(point(angle, slice.radius), color);
+        }
+        for step in 0..steps {
+            mesh.add_triangle(0, (step + 1) as u32, (step + 2) as u32);
+        }
+        painter.add(egui::Shape::mesh(mesh));
+        return;
+    }
+
+    // A donut: alternate outer and inner vertices, then two triangles per segment.
     let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(center, color);
     for step in 0..=steps {
         let angle = slice.start + sweep * (step as f32 / steps as f32);
-        let x = slice.center.x + slice.radius * angle.sin();
-        let y = slice.center.y - slice.radius * angle.cos();
-        mesh.colored_vertex(origin + egui::vec2(x, y), color);
+        mesh.colored_vertex(point(angle, slice.radius), color);
+        mesh.colored_vertex(point(angle, slice.inner_radius), color);
     }
     for step in 0..steps {
-        mesh.add_triangle(0, (step + 1) as u32, (step + 2) as u32);
+        let outer = (step * 2) as u32;
+        let inner = outer + 1;
+        mesh.add_triangle(outer, outer + 2, inner + 3);
+        mesh.add_triangle(outer, inner + 3, inner);
     }
     painter.add(egui::Shape::mesh(mesh));
 }

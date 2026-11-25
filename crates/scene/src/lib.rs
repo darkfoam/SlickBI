@@ -107,6 +107,8 @@ pub struct ArcSlice {
     pub center: Point,
     /// The outer radius.
     pub radius: f32,
+    /// The inner radius of a donut, or `0.0` for a full pie slice.
+    pub inner_radius: f32,
     /// The start angle, in radians.
     pub start: f32,
     /// The end angle, in radians. Greater than `start`.
@@ -244,7 +246,7 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
         .position(|column| column.kind == ChannelKind::Color);
 
     // A pie colours by category and ignores the colour shelf, but still needs legend space.
-    let pie = matches!(spec.mark, Mark::Arc);
+    let pie = matches!(spec.mark, Mark::Arc | Mark::Donut);
     let has_color = !pie && color_index.is_some();
     let show_axes = spec.options.show_axes && !pie;
     let show_legend = spec.options.show_legend && (has_color || pie);
@@ -281,7 +283,8 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
         Mark::Line => line_scene(spec, plot, x, numeric_y(y)?, false, color),
         Mark::Area => line_scene(spec, plot, x, numeric_y(y)?, true, color),
         Mark::Point => point_scene(spec, plot, x, numeric_y(y)?, color),
-        Mark::Arc => arc_scene(spec, plot, x, numeric_y(y)?),
+        Mark::Arc => arc_scene(spec, plot, x, numeric_y(y)?, false),
+        Mark::Donut => arc_scene(spec, plot, x, numeric_y(y)?, true),
         other => Err(SceneError::UnsupportedMark { mark: other }),
     }?;
 
@@ -584,7 +587,8 @@ fn point_scene(
     })
 }
 
-/// A pie chart: one wedge per category with a positive value, sweeping clockwise from the top.
+/// A pie or donut chart: one wedge per category with a positive value, sweeping clockwise from the
+/// top. A donut leaves a hole of 55% of the radius.
 ///
 /// Categories with a null, zero or negative value are left out, because a pie has no way to show
 /// them. Negative values are common in financial data, so this is a documented choice rather than
@@ -594,6 +598,7 @@ fn arc_scene(
     plot: Rect,
     x: XData,
     y: Vec<Option<f64>>,
+    donut: bool,
 ) -> Result<Scene, SceneError> {
     let categories = x.as_categorical().ok_or(SceneError::CategoricalXExpected)?;
 
@@ -602,6 +607,7 @@ fn arc_scene(
         y: plot.y + plot.height / 2.0,
     };
     let radius = plot.width.min(plot.height) / 2.0 * 0.95;
+    let inner_radius = if donut { radius * 0.55 } else { 0.0 };
 
     let total: f64 = y
         .iter()
@@ -628,6 +634,7 @@ fn arc_scene(
                 kind: SeriesKind::Arc(ArcSlice {
                     center,
                     radius,
+                    inner_radius,
                     start,
                     end: angle,
                 }),
@@ -1425,6 +1432,7 @@ mod tests {
                 panic!("expected an arc");
             };
             assert!(slice.radius > 0.0);
+            assert_eq!(slice.inner_radius, 0.0, "a pie has no hole");
             assert!(slice.end >= slice.start);
             angles.push(slice.end - slice.start);
             total += slice.end - slice.start;
@@ -1575,5 +1583,18 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_donut_has_an_inner_radius() {
+        let columns = vec![column(ChannelKind::X, "x"), column(ChannelKind::Y, "y")];
+        let batch = batch_categorical_y(&["A", "B"], &[1.0, 1.0]);
+        let scene = build(&spec(Mark::Donut, &columns, &[batch])).expect("builds");
+
+        let SeriesKind::Arc(slice) = &scene.series[0].kind else {
+            panic!("expected an arc");
+        };
+        assert!(slice.inner_radius > 0.0, "a donut has a hole");
+        assert!(slice.inner_radius < slice.radius);
     }
 }
