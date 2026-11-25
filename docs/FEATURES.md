@@ -225,6 +225,7 @@ release. They are not part of the MVP.
 | ID | Idea | Notes |
 |---|---|---|
 | I01 | An embedded Python 3 console that can use Pandas or Dask to modify and analyse data: data in, data out, with the result usable in charts. | Local analysis of your own data, so it would be free. A Julia and an R console would be welcome too. Not scheduled; no design decided. |
+| I02 | A data-manipulation and editing tab, opened first for a new source (like Tableau's data source view), to modify or enhance imported data before or after import/connection: calculated columns, cleaning, formatting, normalisation, and changing column types. | Local work on your own data, so it would be free. Not scheduled; no design decided. |
 
 ## Internal, not a feature
 
