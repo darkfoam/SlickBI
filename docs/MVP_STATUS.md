@@ -1,7 +1,7 @@
 # MVP status map — 0.0.3 "Workbench"
 
-Snapshot: 2026-11-25. Updated after the database sources, spreadsheets and the continuous time
-axis landed.
+Snapshot: 2026-11-25. All 51 MVP-scope features are implemented; the remaining work is
+acceptance, quality and ship hardening.
 
 This is a **derived** map of what stands between the current tree and a completed MVP. The
 authoritative documents remain [`FEATURES.md`](FEATURES.md) (per-feature status),
@@ -144,7 +144,7 @@ At the snapshot, of the **51 MVP-scope features**: **51 done, 0 partial, 0 not s
 | 19 | 8 h soak, < 10 % memory growth | **Not met** | No soak test |
 | 20 | JSON Schema validates app output, zero errors | **Met** | `jsonschema` validates the serialised workbook; schema file cannot drift |
 
-Counts: **Met 12 · Partial 4 · Not met 4.**
+Counts: **Met 12 · Partial 6 · Not met 2.**
 
 ---
 
