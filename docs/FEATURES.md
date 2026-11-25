@@ -85,7 +85,7 @@ that needs different data is a forked worksheet.
 | V09 | Pie and donut charts | F | 0.0.3 | done |
 | V10 | KPI and text tiles | F | 0.0.3 | done |
 | V11 | Colourblind-safe palettes by default | F | 0.0.3 | done |
-| V12 | Automatic chart suggestion from the current shelves | F | 0.0.3 | planned |
+| V12 | Automatic chart suggestion from the current shelves | F | 0.0.3 | done |
 | V13 | Dense marks: one million points at interactive frame rates | F | 0.0.4 | planned |
 | V14 | Small multiples | F | 0.1.0 | planned |
 | V15 | Dual axis | F | 0.1.0 | planned |

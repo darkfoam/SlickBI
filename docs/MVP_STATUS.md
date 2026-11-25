@@ -30,7 +30,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **51 MVP-scope features**: **48 done, 0 partial, 3 not started**.
+At the snapshot, of the **51 MVP-scope features**: **49 done, 0 partial, 2 not started**.
 
 ---
 
@@ -85,7 +85,7 @@ At the snapshot, of the **51 MVP-scope features**: **48 done, 0 partial, 3 not s
 | V09 | Pie and donut | **Done** | Pie (`a6d91c9`) and donut (`f45f9de`), both with legends | — |
 | V10 | KPI and text tiles | **Done** | `Mark::Text` renders one formatted value, no axes needed | — |
 | V11 | Colourblind-safe palettes by default | **Done** | Okabe–Ito default palette; a test keeps the scene and theme in sync | — |
-| V12 | Automatic chart suggestion | **Not started** | — | M |
+| V12 | Automatic chart suggestion | **Done** | A toolbar hint suggests the mark the shelves imply; applying it is one click | — |
 | V23 | Continuous time axis for dates | **Done** | Temporal columns become numeric ticks with date-formatted ticks on line/area/point; bars and pies keep date categories. The motivating case is a bank balance over a month | — |
 | T01 | Tabs: create/rename/duplicate/close/reorder | **Done** | reorder added in `007cb37` | — |
 | T03 | "Used in" indicator | **Done** | `Session::used_in`, toolbar display | — |
@@ -194,7 +194,7 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [x] **V08 heatmaps** — `Mark::Rect`, sequential colour ramp, two categorical axes. **M**
 - [x] **V04 tables** — `Mark::Table`, text-grid scene, all renderers, UI. **L**
 - [x] **V05 remaining shelves** — size/text/detail/tooltip through the scene and renderers. **M**
-- [ ] **V12 chart suggestion** — pick a mark from the current shelves. **M**
+- [x] **V12 chart suggestion** — the shelves suggest a mark; one click applies it. **M**
 - [x] **V23 continuous time axis** — temporal columns map to numeric ticks with date-formatted
       ticks on line, area and point charts; bars and pies keep date categories. **S**
 

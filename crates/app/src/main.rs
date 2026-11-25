@@ -389,6 +389,18 @@ impl SlickBiApp {
             }
         });
 
+        if let Some(suggested) = self.session.suggested_mark()
+            && self
+                .session
+                .active_worksheet()
+                .is_some_and(|worksheet| worksheet.mark != suggested)
+            && ui
+                .small_button(format!("Suggest {}", mark_label(suggested)))
+                .clicked()
+        {
+            self.session.set_mark(suggested);
+        }
+
         let _ = count;
         if let Some(action) = action {
             self.apply_tab_action(action);
@@ -2510,6 +2522,21 @@ fn parse_value(text: &str) -> Vec<Scalar> {
         return vec![Scalar::Integer(integer)];
     }
     vec![Scalar::Text(trimmed.to_owned())]
+}
+
+fn mark_label(mark: Mark) -> &'static str {
+    match mark {
+        Mark::Bar => "Bar",
+        Mark::Line => "Line",
+        Mark::Area => "Area",
+        Mark::Point => "Point",
+        Mark::Rect => "Heatmap",
+        Mark::Arc => "Pie",
+        Mark::Donut => "Donut",
+        Mark::Text => "KPI",
+        Mark::Table => "Table",
+        Mark::Rule => "Rule",
+    }
 }
 
 fn op_accepts_parameter(op: FilterOp) -> bool {

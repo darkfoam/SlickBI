@@ -135,6 +135,58 @@ impl Session {
         self.live.is_some()
     }
 
+    /// The mark the current shelves suggest, when there is enough on them to suggest one.
+    ///
+    /// This is advice, not a mutation: a date and a measure suggest a line, two measures a
+    /// scatter, two dimensions with a measure on colour a heatmap, a measure alone a KPI tile.
+    pub fn suggested_mark(&self) -> Option<Mark> {
+        let worksheet = self.active_worksheet()?;
+        let model = self
+            .workbook
+            .models
+            .iter()
+            .find(|model| model.id == worksheet.model)?;
+        let field = |id: &FieldId| model.fields.iter().find(|field| &field.id == id);
+        let x = worksheet
+            .encoding
+            .x
+            .as_ref()
+            .and_then(|channel| field(&channel.field));
+        let y = worksheet
+            .encoding
+            .y
+            .as_ref()
+            .and_then(|channel| field(&channel.field));
+        let color = worksheet
+            .encoding
+            .color
+            .as_ref()
+            .and_then(|channel| field(&channel.field));
+        let temporal = |field: Option<&Field>| {
+            field.is_some_and(|field| {
+                matches!(field.data_type, DataType::Date | DataType::Timestamp)
+            })
+        };
+        let measure =
+            |field: Option<&Field>| field.is_some_and(|field| field.role == Role::Measure);
+
+        match (x, y) {
+            (Some(_), Some(_)) if measure(x) && measure(y) => Some(Mark::Point),
+            (Some(_), Some(_)) if temporal(x) && measure(y) => Some(Mark::Line),
+            (Some(_), Some(_)) if !measure(x) && !measure(y) => {
+                if measure(color) {
+                    Some(Mark::Rect)
+                } else {
+                    Some(Mark::Table)
+                }
+            }
+            (Some(_), Some(_)) => Some(Mark::Bar),
+            (None, Some(_)) if measure(y) => Some(Mark::Text),
+            (Some(_), None) => Some(Mark::Table),
+            _ => None,
+        }
+    }
+
     /// The number of worksheets.
     pub fn worksheet_count(&self) -> usize {
         self.workbook.worksheets.len()
@@ -2272,6 +2324,75 @@ mod tests {
             "[c]]d] + 1",
             "escaped brackets survive"
         );
+    }
+
+    #[test]
+    fn the_shelves_suggest_a_mark() {
+        let (mut session, path) = loaded();
+        assert_eq!(session.suggested_mark(), None, "nothing on the shelves");
+
+        session.assign(Shelf::X, &FieldId::new("region"));
+        assert_eq!(
+            session.suggested_mark(),
+            Some(Mark::Table),
+            "one dimension is a table"
+        );
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        assert_eq!(
+            session.suggested_mark(),
+            Some(Mark::Bar),
+            "a dimension and a measure are bars"
+        );
+
+        session.assign(Shelf::X, &FieldId::new("amount"));
+        session.assign(Shelf::Y, &FieldId::new("units"));
+        assert_eq!(
+            session.suggested_mark(),
+            Some(Mark::Point),
+            "two measures are a scatter"
+        );
+
+        let heat = temp("suggest-heat.csv");
+        std::fs::write(&heat, "row,col,value\nA,One,10\nB,Two,20\n").expect("writes csv");
+        let mut heat_session = Session::new();
+        heat_session
+            .load_file(&heat, SourceFormat::Csv)
+            .expect("loads");
+        heat_session.assign(Shelf::X, &FieldId::new("row"));
+        heat_session.assign(Shelf::Y, &FieldId::new("col"));
+        heat_session.assign(Shelf::Color, &FieldId::new("value"));
+        assert_eq!(
+            heat_session.suggested_mark(),
+            Some(Mark::Rect),
+            "two dimensions and a measure on colour are a heatmap"
+        );
+
+        let dates = temp("suggest-dates.csv");
+        std::fs::write(&dates, "day,balance\n2025-01-01,10\n2025-01-02,20\n").expect("writes csv");
+        let mut date_session = Session::new();
+        date_session
+            .load_file(&dates, SourceFormat::Csv)
+            .expect("loads");
+        date_session.assign(Shelf::X, &FieldId::new("day"));
+        date_session.assign(Shelf::Y, &FieldId::new("balance"));
+        assert_eq!(
+            date_session.suggested_mark(),
+            Some(Mark::Line),
+            "a date and a measure are a line"
+        );
+
+        let mut kpi = Session::new();
+        kpi.load_file(&dates, SourceFormat::Csv).expect("loads");
+        kpi.assign(Shelf::Y, &FieldId::new("balance"));
+        assert_eq!(
+            kpi.suggested_mark(),
+            Some(Mark::Text),
+            "a single measure is a KPI tile"
+        );
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&heat).ok();
+        std::fs::remove_file(&dates).ok();
     }
 
     #[test]
