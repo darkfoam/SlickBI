@@ -73,6 +73,11 @@ struct SlickBiApp {
 
     renaming: Option<(usize, String)>,
     pending_delete: Option<(usize, Vec<String>)>,
+
+    format_field: Option<FieldId>,
+    format_decimals: u8,
+    format_thousands: bool,
+    format_currency: String,
 }
 
 impl SlickBiApp {
@@ -94,6 +99,10 @@ impl SlickBiApp {
             filter_value: String::new(),
             renaming: None,
             pending_delete: None,
+            format_field: None,
+            format_decimals: 0,
+            format_thousands: false,
+            format_currency: String::new(),
         }
     }
 
@@ -363,6 +372,33 @@ impl SlickBiApp {
             };
             self.session.assign(shelf, &id);
         }
+        inner.inner.context_menu(|ui| {
+            if ui.button("Format…").clicked() {
+                self.open_format(&id);
+                ui.close();
+            }
+        });
+    }
+
+    /// Loads a field's current format into the editor and opens it.
+    fn open_format(&mut self, id: &FieldId) {
+        match self.session.field_format(id) {
+            Some(slickbi_spec::FieldFormat::Number {
+                decimals,
+                thousands,
+                currency,
+            }) => {
+                self.format_decimals = decimals;
+                self.format_thousands = thousands;
+                self.format_currency = currency.unwrap_or_default();
+            }
+            _ => {
+                self.format_decimals = 0;
+                self.format_thousands = false;
+                self.format_currency.clear();
+            }
+        }
+        self.format_field = Some(id.clone());
     }
 
     fn shelves(&mut self, ui: &mut egui::Ui) {
@@ -1219,6 +1255,54 @@ impl SlickBiApp {
         self.filter_open = open;
     }
 
+    fn format_window(&mut self, ctx: &egui::Context) {
+        let Some(field) = self.format_field.clone() else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new("Field format")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(320.0)
+            .show(ctx, |ui| {
+                let name = self.field_name(&field).unwrap_or_else(|| field.to_string());
+                ui.label(egui::RichText::new(name).strong());
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Decimals").small().weak());
+                    ui.add(egui::DragValue::new(&mut self.format_decimals).range(0..=6));
+                    ui.checkbox(&mut self.format_thousands, "Thousands");
+                });
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("Currency or prefix").small().weak());
+                ui.text_edit_singleline(&mut self.format_currency);
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Apply").clicked() {
+                        let currency = self.format_currency.trim();
+                        let format = slickbi_spec::FieldFormat::Number {
+                            decimals: self.format_decimals,
+                            thousands: self.format_thousands,
+                            currency: (!currency.is_empty()).then(|| currency.to_owned()),
+                        };
+                        self.session.set_field_format(&field, Some(format));
+                        self.format_field = None;
+                    }
+                    if ui.button("Clear").clicked() {
+                        self.session.set_field_format(&field, None);
+                        self.format_field = None;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.format_field = None;
+                    }
+                });
+            });
+        if !open {
+            self.format_field = None;
+        }
+    }
+
     fn delete_window(&mut self, ctx: &egui::Context) {
         let Some((index, used)) = self.pending_delete.clone() else {
             return;
@@ -1306,6 +1390,7 @@ impl eframe::App for SlickBiApp {
         self.calc_window(ui.ctx());
         self.filter_window(ui.ctx());
         self.delete_window(ui.ctx());
+        self.format_window(ui.ctx());
     }
 }
 

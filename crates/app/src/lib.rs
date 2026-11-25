@@ -15,8 +15,8 @@ use slickbi_model::Model;
 use slickbi_planner::{PlanOptions, plan};
 use slickbi_scene::{Margins, Scene, SceneOptions, SceneSpec, build};
 use slickbi_spec::{
-    Agg, Channel, DataModelId, DataType, Field, FieldId, FieldSource, Filter, FilterOp, Mark,
-    Report, Role, Scalar, SortKey, Workbook, Worksheet, WorksheetId,
+    Agg, Channel, DataModelId, DataType, Field, FieldFormat, FieldId, FieldSource, Filter,
+    FilterOp, Mark, Report, Role, Scalar, SortKey, Workbook, Worksheet, WorksheetId,
 };
 use slickbi_workbook::Scz;
 use thiserror::Error;
@@ -434,6 +434,37 @@ impl Session {
         model.fields.push(field);
         self.refresh();
         Ok(())
+    }
+
+    /// The display format declared on a field, if any.
+    pub fn field_format(&self, field: &FieldId) -> Option<FieldFormat> {
+        let worksheet = self.active_worksheet()?;
+        let model = self
+            .workbook
+            .models
+            .iter()
+            .find(|m| m.id == worksheet.model)?;
+        model
+            .fields
+            .iter()
+            .find(|candidate| &candidate.id == field)
+            .and_then(|candidate| candidate.format.clone())
+    }
+
+    /// Sets or clears a field's display format, then re-renders.
+    pub fn set_field_format(&mut self, field: &FieldId, format: Option<FieldFormat>) {
+        let Some(model_id) = self
+            .active_worksheet()
+            .map(|worksheet| worksheet.model.clone())
+        else {
+            return;
+        };
+        if let Some(model) = self.workbook.models.iter_mut().find(|m| m.id == model_id)
+            && let Some(candidate) = model.fields.iter_mut().find(|f| &f.id == field)
+        {
+            candidate.format = format;
+        }
+        self.refresh();
     }
 
     /// Adds a report and makes it active.
@@ -1040,6 +1071,31 @@ mod tests {
             .unwrap_or_else(|| panic!("no scene: {:?}", session.error()));
         assert!(scene.y_axis.categorical, "categories belong on the y axis");
         assert!(!scene.x_axis.categorical, "values belong on the x axis");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_field_number_format_reaches_the_chart() {
+        let (mut session, path) = loaded();
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        session.set_field_format(
+            &FieldId::new("amount"),
+            Some(slickbi_spec::FieldFormat::Number {
+                decimals: 1,
+                thousands: true,
+                currency: Some("$".to_owned()),
+            }),
+        );
+
+        let scene = session
+            .scene()
+            .unwrap_or_else(|| panic!("no scene: {:?}", session.error()));
+        let texts: Vec<&str> = scene.y_axis.ticks.iter().map(|t| t.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|text| text.starts_with('$')),
+            "the currency format reached the axis: {texts:?}"
+        );
         std::fs::remove_file(&path).ok();
     }
 

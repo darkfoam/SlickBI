@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use slickbi_calc::{CalcError, Compiled, FieldBinding, FieldResolver, ParamValue, ValueType};
-use slickbi_spec::{DataModel, DataType, Field, FieldSource, Role, Table};
+use slickbi_spec::{DataModel, DataType, Field, FieldFormat, FieldSource, Role, Table};
 use slickbi_spec::{DataModelId, FieldId, TableId};
 use thiserror::Error;
 
@@ -54,6 +54,8 @@ pub struct ResolvedField {
     pub role: Role,
     /// The type shown to the user. Declared where the model declares one, derived otherwise.
     pub data_type: DataType,
+    /// How the field's values are displayed, when the author set a format.
+    pub format: Option<FieldFormat>,
     /// The table the field is declared against.
     pub table: TableId,
     /// Whether the field's SQL contains an aggregate function.
@@ -153,6 +155,7 @@ impl Model {
                         ),
                         role: field.role,
                         data_type: column.data_type,
+                        format: field.format.clone(),
                         table: field.table.clone(),
                         aggregate: false,
                         tables: vec![field.table.clone()],
@@ -359,6 +362,7 @@ fn compile_expression(
         ),
         role: field.role,
         data_type: declared_type,
+        format: field.format.clone(),
         table: field.table.clone(),
         aggregate: compiled.aggregate,
         tables: used_tables.into_iter().collect(),
@@ -1034,5 +1038,26 @@ mod tests {
         let model = resolve(base_fields()).expect("resolves");
         assert!(model.resolve_field("Revenue").is_some());
         assert!(model.resolve_field("revenue").is_none());
+    }
+
+    #[test]
+    fn a_field_format_is_carried_into_resolution() {
+        let mut fields = base_fields();
+        fields[2].format = Some(FieldFormat::Number {
+            decimals: 2,
+            thousands: true,
+            currency: None,
+        });
+
+        let model = resolve(fields).expect("resolves");
+        let revenue = model.field_by_name("Revenue").expect("has Revenue");
+        assert_eq!(
+            revenue.format,
+            Some(FieldFormat::Number {
+                decimals: 2,
+                thousands: true,
+                currency: None,
+            })
+        );
     }
 }

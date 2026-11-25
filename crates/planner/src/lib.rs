@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use slickbi_calc::{ParamValue, ValueType};
 use slickbi_model::{Model, ResolvedField, ResolvedTable};
 use slickbi_spec::{Agg, Channel, Encoding, Filter, FilterOp, Scalar, SortKey, Transform};
-use slickbi_spec::{DataType, FieldId, TableId, Worksheet};
+use slickbi_spec::{DataType, FieldFormat, FieldId, TableId, Worksheet};
 use thiserror::Error;
 
 /// The SQL dialect a query is written in.
@@ -69,6 +69,8 @@ pub struct OutputColumn {
     pub field: FieldId,
     /// The type of the value.
     pub data_type: DataType,
+    /// How the value should be displayed, when the field declares a format.
+    pub format: Option<FieldFormat>,
     /// Whether the value is aggregated over the group.
     pub aggregate: bool,
 }
@@ -148,6 +150,7 @@ pub fn plan(
             field: field.id.clone(),
             agg: channel.agg,
             data_type,
+            format: field.format.clone(),
             aggregate,
         });
     }
@@ -261,6 +264,7 @@ pub fn plan(
                 name: item.alias,
                 field: item.field,
                 data_type: item.data_type,
+                format: item.format,
                 aggregate: item.aggregate,
             })
             .collect(),
@@ -473,6 +477,7 @@ struct SelectItem {
     field: FieldId,
     agg: Agg,
     data_type: DataType,
+    format: Option<FieldFormat>,
     aggregate: bool,
 }
 

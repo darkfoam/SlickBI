@@ -739,6 +739,7 @@ mod tests {
             name: name.to_owned(),
             field: FieldId::new(name),
             data_type: SpecType::Text,
+            format: None,
             aggregate: false,
         }
     }

@@ -17,7 +17,7 @@ use arrow::array::{Array, Float64Array, StringArray};
 use arrow::datatypes::DataType as ArrowDataType;
 use arrow::record_batch::RecordBatch;
 use slickbi_planner::{ChannelKind, OutputColumn};
-use slickbi_spec::Mark;
+use slickbi_spec::{FieldFormat, Mark};
 use thiserror::Error;
 
 /// The palette in `slickbi_spec::Theme::light`, as RGBA with full opacity.
@@ -316,6 +316,14 @@ fn plot_rect(size: (f32, f32), margins: Margins) -> Rect {
     }
 }
 
+/// The display format declared on the column from a given shelf, if any.
+fn column_format(columns: &[OutputColumn], kind: ChannelKind) -> Option<&FieldFormat> {
+    columns
+        .iter()
+        .find(|column| column.kind == kind)
+        .and_then(|column| column.format.as_ref())
+}
+
 /// The x values, either categorical or numeric.
 enum XData {
     Categorical(Vec<Option<String>>),
@@ -397,6 +405,7 @@ fn bar_scene(
     }
 
     let (x_axis, y_axis) = if vertical {
+        let value_format = column_format(spec.columns, ChannelKind::Y);
         let ticks = distinct
             .iter()
             .enumerate()
@@ -410,9 +419,10 @@ fn bar_scene(
                 ticks,
                 categorical: true,
             },
-            numeric_axis(&scale, plot),
+            numeric_axis(&scale, plot, value_format),
         )
     } else {
+        let value_format = column_format(spec.columns, ChannelKind::X);
         let ticks = distinct
             .iter()
             .enumerate()
@@ -423,7 +433,7 @@ fn bar_scene(
             .collect();
         (
             Axis {
-                ticks: linear_ticks(&scale, plot, false),
+                ticks: linear_ticks(&scale, plot, false, value_format),
                 categorical: false,
             },
             Axis {
@@ -495,10 +505,15 @@ fn line_scene(
     }
 
     let x_axis = Axis {
-        ticks: linear_ticks(&x_scale, plot, false),
+        ticks: linear_ticks(
+            &x_scale,
+            plot,
+            false,
+            column_format(spec.columns, ChannelKind::X),
+        ),
         categorical: false,
     };
-    let y_axis = numeric_axis(&y_scale, plot);
+    let y_axis = numeric_axis(&y_scale, plot, column_format(spec.columns, ChannelKind::Y));
 
     Ok(Scene {
         width: spec.size.0,
@@ -552,10 +567,15 @@ fn point_scene(
         height: spec.size.1,
         plot,
         x_axis: Axis {
-            ticks: linear_ticks(&x_scale, plot, false),
+            ticks: linear_ticks(
+                &x_scale,
+                plot,
+                false,
+                column_format(spec.columns, ChannelKind::X),
+            ),
             categorical: false,
         },
-        y_axis: numeric_axis(&y_scale, plot),
+        y_axis: numeric_axis(&y_scale, plot, column_format(spec.columns, ChannelKind::Y)),
         series,
         legend: Vec::new(),
     })
@@ -697,15 +717,20 @@ impl LinearScale {
     }
 }
 
-fn numeric_axis(scale: &LinearScale, plot: Rect) -> Axis {
+fn numeric_axis(scale: &LinearScale, plot: Rect, format: Option<&FieldFormat>) -> Axis {
     Axis {
-        ticks: linear_ticks(scale, plot, true),
+        ticks: linear_ticks(scale, plot, true, format),
         categorical: false,
     }
 }
 
 /// Builds ticks for a linear scale. When `vertical`, positions are y coordinates (top-down).
-fn linear_ticks(scale: &LinearScale, plot: Rect, vertical: bool) -> Vec<Tick> {
+fn linear_ticks(
+    scale: &LinearScale,
+    plot: Rect,
+    vertical: bool,
+    format: Option<&FieldFormat>,
+) -> Vec<Tick> {
     scale
         .ticks(6)
         .into_iter()
@@ -717,7 +742,7 @@ fn linear_ticks(scale: &LinearScale, plot: Rect, vertical: bool) -> Vec<Tick> {
             };
             Tick {
                 position,
-                text: format_number(value),
+                text: format_number(value, format),
             }
         })
         .collect()
@@ -780,7 +805,7 @@ fn nice_step(raw: f64) -> f64 {
 }
 
 /// Formats a tick value compactly: integers without a fraction, decimals trimmed.
-fn format_number(value: f64) -> String {
+fn format_plain(value: f64) -> String {
     let rounded = (value * 1_000_000.0).round() / 1_000_000.0;
     if rounded.fract().abs() < f64::EPSILON {
         format!("{rounded:.0}")
@@ -788,6 +813,58 @@ fn format_number(value: f64) -> String {
         let text = format!("{rounded:.6}");
         text.trim_end_matches('0').trim_end_matches('.').to_owned()
     }
+}
+
+/// Formats a value using a field's number format, or the compact default when it has none.
+fn format_number(value: f64, format: Option<&FieldFormat>) -> String {
+    let Some(FieldFormat::Number {
+        decimals,
+        thousands,
+        currency,
+    }) = format
+    else {
+        return format_plain(value);
+    };
+
+    let decimals = *decimals as usize;
+    let negative = value < 0.0;
+    let text = format!("{:.decimals$}", value.abs());
+    let (integer, fraction) = match text.split_once('.') {
+        Some((integer, fraction)) => (integer.to_owned(), Some(fraction.to_owned())),
+        None => (text, None),
+    };
+    let integer = if *thousands {
+        group_thousands(&integer)
+    } else {
+        integer
+    };
+
+    let mut out = String::new();
+    if negative {
+        out.push('-');
+    }
+    if let Some(currency) = currency {
+        out.push_str(currency);
+    }
+    out.push_str(&integer);
+    if let Some(fraction) = fraction {
+        out.push('.');
+        out.push_str(&fraction);
+    }
+    out
+}
+
+/// Inserts thousands separators into a run of digits.
+fn group_thousands(digits: &str) -> String {
+    let length = digits.len();
+    let mut out = String::with_capacity(length + length / 3);
+    for (index, character) in digits.chars().enumerate() {
+        if index > 0 && (length - index).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(character);
+    }
+    out
 }
 
 /// Reads one axis as either categorical (text) or numeric, depending on the column's type.
@@ -857,7 +934,7 @@ fn read_labels(batches: &[RecordBatch], index: usize) -> Result<Vec<Option<Strin
                 labels.push((!array.is_null(i)).then(|| array.value(i).to_owned()));
             }
         } else if let Some(values) = to_f64(column) {
-            labels.extend(values.into_iter().map(|value| value.map(format_number)));
+            labels.extend(values.into_iter().map(|value| value.map(format_plain)));
         } else {
             return Err(SceneError::UndrawableColorType);
         }
@@ -1003,6 +1080,7 @@ mod tests {
             name: name.to_owned(),
             field: FieldId::new(name),
             data_type: SpecType::Text,
+            format: None,
             aggregate: false,
         }
     }
@@ -1452,5 +1530,28 @@ mod tests {
         let scene = build(&scene_spec).expect("builds");
         assert!(scene.x_axis.ticks.is_empty());
         assert_eq!(scene.legend.len(), 2);
+    }
+
+    #[test]
+    fn a_number_format_is_applied_to_the_value_axis() {
+        let mut y_column = column(ChannelKind::Y, "y");
+        y_column.format = Some(FieldFormat::Number {
+            decimals: 0,
+            thousands: true,
+            currency: Some("$".to_owned()),
+        });
+        let columns = vec![column(ChannelKind::X, "x"), y_column];
+        let batch = batch_categorical_y(&["A", "B"], &[1_200.0, 3_400.0]);
+
+        let scene = build(&spec(Mark::Bar, &columns, &[batch])).expect("builds");
+        let texts: Vec<&str> = scene.y_axis.ticks.iter().map(|t| t.text.as_str()).collect();
+        assert!(
+            texts.iter().any(|text| text.starts_with('$')),
+            "ticks carry the currency: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|text| text.contains(',')),
+            "ticks group thousands: {texts:?}"
+        );
     }
 }
