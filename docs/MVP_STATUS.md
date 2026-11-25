@@ -29,7 +29,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **48 MVP-scope features**: **39 done, 2 partial, 7 not started**.
+At the snapshot, of the **48 MVP-scope features**: **40 done, 1 partial, 7 not started**.
 
 ---
 
@@ -55,7 +55,7 @@ At the snapshot, of the **48 MVP-scope features**: **39 done, 2 partial, 7 not s
 |---|---|---|---|---|
 | M01 | Auto typing into dims/measures | **Done** | `connectors::infer_role`; data pane split | — |
 | M02 | Rename / hide / reorder / folders | **Not started** | `Field` has `name`/`hidden`, but no API or UI. Rename is coupled to calculations (expressions reference `[Name]`), so it must rewrite references | M |
-| M03 | Type override, number and date formats | **Partial** | Number formats done end-to-end + editor (`4b8c09f`). Type override and date formats remain; dates are not even drawable on an axis yet | M |
+| M03 | Type override, number and date formats | **Done** | Type override casts in SQL; number and date formats; dates are categorical dimensions | — |
 | M04 | Field descriptions | **Done** | Editable from the data-pane menu, shown as a hover tooltip | — |
 
 ### Calculations
@@ -203,7 +203,7 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [ ] **C03 parameters** — `Workbook.parameters`, filter binding, calc references, UI, planner
       binding. Unblocks **MVP-06**. **L**
 - [ ] **C04 inline span errors** — highlight the offending range in the calc editor. **M**
-- [ ] **M03 remainder** — type override; date-axis support and date formats. **M**
+- [x] **M03 remainder** — type override; date formatting and date dimensions. **M**
 
 ### Phase 4 — reports and testing seams
 - [ ] **R06 cross-filtering** — hit index, cross-filter state, predicate per element. Unblocks
