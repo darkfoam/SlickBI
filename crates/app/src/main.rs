@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use eframe::egui;
-use slickbi_app::{FieldInfo, Session, Shelf};
+use slickbi_app::{FieldInfo, RecentFiles, Session, Shelf};
 use slickbi_connectors::DatabaseKind;
 use slickbi_scene::{Bar, LEGEND_HEIGHT, Scene, SeriesKind, TITLE_SPACE};
 use slickbi_spec::{Agg, Channel, DataType, FieldId, FilterOp, Mark, ParamId, Role, Scalar};
@@ -69,6 +69,10 @@ struct SlickBiApp {
     mode: Mode,
     path_input: String,
     sheet_pick: Option<SheetPick>,
+    show_start: bool,
+    start_error: Option<String>,
+    recent: RecentFiles,
+    current_workbook: Option<PathBuf>,
 
     calc_open: bool,
     calc_name: String,
@@ -126,14 +130,14 @@ impl SlickBiApp {
         install_style(&cc.egui_ctx, false);
 
         SlickBiApp {
-            session: {
-                let mut session = Session::new();
-                let _ = session.load_sample();
-                session
-            },
+            session: Session::new(),
             mode: Mode::Charts,
             path_input: String::new(),
             sheet_pick: None,
+            show_start: true,
+            start_error: None,
+            recent: RecentFiles::load(),
+            current_workbook: None,
             calc_open: false,
             calc_name: String::new(),
             calc_expr: String::new(),
@@ -179,38 +183,229 @@ impl SlickBiApp {
     }
 
     fn open_path(&mut self, path: PathBuf) {
+        if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("scz"))
+        {
+            self.open_workbook(path);
+            return;
+        }
         if let Some(kind) = slickbi_connectors::SpreadsheetKind::from_path(&path) {
             match self.session.spreadsheet_sheets(&path, kind) {
                 Ok(sheets) if sheets.len() > 1 => {
                     self.sheet_pick = Some(SheetPick { path, kind, sheets });
                 }
-                Ok(_) => {
-                    if let Err(error) = self.session.load_spreadsheet(&path, kind) {
-                        eprintln!("failed to load {path:?}: {error}");
+                Ok(_) => match self.session.load_spreadsheet(&path, kind) {
+                    Ok(()) => self.opened_source(),
+                    Err(error) => {
+                        self.report_error(format!("Could not load {}: {error}", path.display()))
                     }
+                },
+                Err(error) => {
+                    self.report_error(format!("Could not read {}: {error}", path.display()))
                 }
-                Err(error) => eprintln!("failed to read {path:?}: {error}"),
             }
             return;
         }
-        if let Err(error) = self.session.load_path(&path) {
-            eprintln!("failed to load {path:?}: {error}");
+        match self.session.load_path(&path) {
+            Ok(()) => self.opened_source(),
+            Err(error) => self.report_error(format!("Could not load {}: {error}", path.display())),
         }
+    }
+
+    /// A data source replaced the workbook; there is no workbook file yet.
+    fn opened_source(&mut self) {
+        self.show_start = false;
+        self.current_workbook = None;
+        self.start_error = None;
+        self.mode = Mode::Charts;
+    }
+
+    fn report_error(&mut self, message: String) {
+        if self.show_start {
+            self.start_error = Some(message);
+        } else {
+            eprintln!("{message}");
+        }
+    }
+
+    /// Opens a saved workbook and records it in the recent list.
+    fn open_workbook(&mut self, path: PathBuf) {
+        match self.session.open(&path) {
+            Ok(()) => {
+                self.recent.remember(&path);
+                self.current_workbook = Some(path);
+                self.show_start = false;
+                self.start_error = None;
+                self.mode = Mode::Charts;
+            }
+            Err(error) => {
+                self.report_error(format!("Could not open {}: {error}", path.display()));
+                self.recent.prune();
+            }
+        }
+    }
+
+    /// The launch screen: start a new report, open one, try the sample, or resume a recent file.
+    fn start_screen(&mut self, ui: &mut egui::Ui) {
+        self.recent.prune();
+        let recents = self.recent.paths().to_vec();
+        egui::CentralPanel::default().show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(54.0);
+                ui.label(
+                    egui::RichText::new("SlickBI")
+                        .heading()
+                        .strong()
+                        .size(38.0),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new(
+                        "Your data, your charts, your reports — on your machine.",
+                    )
+                    .weak(),
+                );
+                ui.add_space(26.0);
+
+                if ui
+                    .add_sized([320.0, 36.0], egui::Button::new("New report"))
+                    .clicked()
+                {
+                    self.session.new_workbook();
+                    self.current_workbook = None;
+                    self.show_start = false;
+                    self.start_error = None;
+                    self.mode = Mode::Charts;
+                }
+                ui.add_space(6.0);
+                if ui
+                    .add_sized([320.0, 36.0], egui::Button::new("Open report…"))
+                    .clicked()
+                    && let Some(path) = rfd::FileDialog::new()
+                        .add_filter("SlickBI workbook", &["scz"])
+                        .pick_file()
+                {
+                    self.open_workbook(path);
+                }
+                ui.add_space(6.0);
+                if ui
+                    .add_sized([320.0, 36.0], egui::Button::new("Open a data file…"))
+                    .clicked()
+                    && let Some(path) = rfd::FileDialog::new()
+                        .add_filter(
+                            "Data files",
+                            &[
+                                "csv", "tsv", "tab", "parquet", "json", "xlsx", "xlsm", "xlsb",
+                                "xls", "ods", "numbers",
+                            ],
+                        )
+                        .pick_file()
+                {
+                    self.open_path(path);
+                }
+                ui.add_space(6.0);
+                if ui
+                    .add_sized([320.0, 36.0], egui::Button::new("Open the sample report"))
+                    .clicked()
+                {
+                    match self.session.load_sample() {
+                        Ok(()) => {
+                            self.current_workbook = None;
+                            self.show_start = false;
+                            self.start_error = None;
+                            self.mode = Mode::Charts;
+                        }
+                        Err(error) => self.start_error = Some(error.to_string()),
+                    }
+                }
+
+                ui.add_space(26.0);
+                ui.label(egui::RichText::new("RECENT").weak().small().strong());
+                ui.add_space(4.0);
+                if recents.is_empty() {
+                    ui.label(
+                        egui::RichText::new("No recent reports yet.")
+                            .weak()
+                            .small(),
+                    );
+                } else {
+                    for path in &recents {
+                        let name = path
+                            .file_stem()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.display().to_string());
+                        let label = format!("{name}    {}", path.display());
+                        if ui
+                            .add_sized([560.0, 30.0], egui::Button::new(label))
+                            .on_hover_text(path.display().to_string())
+                            .clicked()
+                        {
+                            self.open_workbook(path.clone());
+                        }
+                    }
+                    if ui.small_button("Clear recent list").clicked() {
+                        self.recent.clear();
+                    }
+                }
+
+                if let Some(error) = &self.start_error {
+                    ui.add_space(10.0);
+                    ui.colored_label(egui::Color32::from_rgb(0xB0, 0x30, 0x20), error);
+                }
+
+                ui.add_space(22.0);
+                ui.label(
+                    egui::RichText::new(
+                        "Or drop a CSV, Excel, Parquet or JSON file anywhere in this window.",
+                    )
+                    .weak()
+                    .small(),
+                );
+                ui.label(
+                    egui::RichText::new(
+                        "A report is saved as a .scz workbook; opening one restores its data and charts.",
+                    )
+                    .weak()
+                    .small(),
+                );
+            });
+        });
     }
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.add_space(4.0);
             ui.label(egui::RichText::new("SlickBI").heading().strong());
+            if ui
+                .small_button("Start")
+                .on_hover_text("Back to the start screen")
+                .clicked()
+            {
+                self.show_start = true;
+                self.start_error = None;
+            }
+            if let Some(path) = &self.current_workbook {
+                ui.label(
+                    egui::RichText::new(
+                        path.file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.display().to_string()),
+                    )
+                    .weak()
+                    .small(),
+                );
+            }
             ui.add_space(8.0);
 
             if ui.button("Open…").clicked()
                 && let Some(path) = rfd::FileDialog::new()
                     .add_filter(
-                        "Data files",
+                        "SlickBI workbooks and data",
                         &[
-                            "csv", "tsv", "tab", "parquet", "json", "xlsx", "xlsm", "xlsb", "xls",
-                            "ods", "numbers",
+                            "scz", "csv", "tsv", "tab", "parquet", "json", "xlsx", "xlsm", "xlsb",
+                            "xls", "ods", "numbers",
                         ],
                     )
                     .pick_file()
@@ -220,13 +415,34 @@ impl SlickBiApp {
             if ui.button("Connect…").clicked() {
                 self.open_connect();
             }
-            if ui.button("Save").clicked()
+            if ui.button("Save").clicked() {
+                let path = self.current_workbook.clone().or_else(|| {
+                    rfd::FileDialog::new()
+                        .add_filter("SlickBI workbook", &["scz"])
+                        .save_file()
+                });
+                if let Some(path) = path {
+                    match self.session.save(&path) {
+                        Ok(()) => {
+                            self.recent.remember(&path);
+                            self.current_workbook = Some(path);
+                        }
+                        Err(error) => eprintln!("failed to save: {error}"),
+                    }
+                }
+            }
+            if ui.button("Save as…").clicked()
                 && let Some(path) = rfd::FileDialog::new()
                     .add_filter("SlickBI workbook", &["scz"])
                     .save_file()
-                && let Err(error) = self.session.save(&path)
             {
-                eprintln!("failed to save: {error}");
+                match self.session.save(&path) {
+                    Ok(()) => {
+                        self.recent.remember(&path);
+                        self.current_workbook = Some(path);
+                    }
+                    Err(error) => eprintln!("failed to save: {error}"),
+                }
             }
 
             ui.add_enabled_ui(self.session.has_source(), |ui| {
@@ -2122,11 +2338,13 @@ impl SlickBiApp {
 
         match action {
             Some(Some(sheet)) => {
-                if let Err(error) =
-                    self.session
-                        .load_spreadsheet_sheet(&pick.path, pick.kind, Some(&sheet))
+                match self
+                    .session
+                    .load_spreadsheet_sheet(&pick.path, pick.kind, Some(&sheet))
                 {
-                    eprintln!("failed to load {}: {error}", pick.path.display());
+                    Ok(()) => self.opened_source(),
+                    Err(error) => self
+                        .report_error(format!("Could not load {}: {error}", pick.path.display())),
                 }
             }
             Some(None) => {}
@@ -2305,6 +2523,12 @@ impl eframe::App for SlickBiApp {
             .collect();
         for path in dropped {
             self.open_path(path);
+        }
+
+        if self.show_start {
+            self.start_screen(ui);
+            self.sheet_window(ui.ctx());
+            return;
         }
 
         egui::Panel::top("top").show(ui, |ui| {

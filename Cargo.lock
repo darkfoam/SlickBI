@@ -4835,6 +4835,8 @@ dependencies = [
  "eframe",
  "rfd",
  "rusqlite",
+ "serde",
+ "serde_json",
  "slickbi-calc",
  "slickbi-connectors",
  "slickbi-engine",

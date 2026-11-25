@@ -85,6 +85,106 @@ pub struct CrossFilter {
     pub label: String,
 }
 
+/// The most recent workbooks, newest first, persisted under the user’s configuration directory.
+#[derive(Debug)]
+pub struct RecentFiles {
+    paths: Vec<PathBuf>,
+    storage: Option<PathBuf>,
+}
+
+impl RecentFiles {
+    /// Loads the list from the platform’s configuration directory.
+    pub fn load() -> Self {
+        Self::at(recent_files_path())
+    }
+
+    /// Loads the list from a given file, or keeps it in memory when `storage` is `None`.
+    pub fn at(storage: Option<PathBuf>) -> Self {
+        let paths = storage
+            .as_ref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        let mut recent = RecentFiles { paths, storage };
+        recent.prune();
+        recent
+    }
+
+    /// The paths, newest first.
+    pub fn paths(&self) -> &[PathBuf] {
+        &self.paths
+    }
+
+    /// Records a workbook as the most recent, keeping at most five.
+    pub fn remember(&mut self, path: &Path) {
+        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        self.paths.retain(|existing| existing != &path);
+        self.paths.insert(0, path);
+        self.paths.truncate(5);
+        self.save();
+    }
+
+    /// Drops paths whose files no longer exist.
+    pub fn prune(&mut self) {
+        let before = self.paths.len();
+        self.paths.retain(|path| path.is_file());
+        if self.paths.len() != before {
+            self.save();
+        }
+    }
+
+    /// Empties the list.
+    pub fn clear(&mut self) {
+        self.paths.clear();
+        self.save();
+    }
+
+    fn save(&self) {
+        let Some(storage) = &self.storage else {
+            return;
+        };
+        if let Some(parent) = storage.parent()
+            && std::fs::create_dir_all(parent).is_err()
+        {
+            return;
+        }
+        let paths: Vec<String> = self
+            .paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        if let Ok(text) = serde_json::to_string(&paths) {
+            std::fs::write(storage, text).ok();
+        }
+    }
+}
+
+/// The file where the recent-workbook list is stored for this platform.
+pub fn recent_files_path() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    let path = std::env::var_os("HOME").map(|home| {
+        PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("SlickBI")
+            .join("recent.json")
+    });
+    #[cfg(target_os = "windows")]
+    let path = std::env::var_os("APPDATA")
+        .map(|appdata| PathBuf::from(appdata).join("SlickBI").join("recent.json"));
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let path = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .map(|base| base.join("slickbi").join("recent.json"));
+    #[cfg(not(any(target_os = "macos", target_os = "windows", unix)))]
+    let path = None;
+    path
+}
+
 /// The application state.
 pub struct Session {
     engine: Engine,
@@ -125,6 +225,16 @@ impl Session {
             scene_size: (800.0, 500.0),
             temp_files: Vec::new(),
         }
+    }
+
+    /// Replaces the session with a blank workbook containing one empty worksheet.
+    pub fn new_workbook(&mut self) {
+        self.reset();
+        let id = self.unique_worksheet_id();
+        let worksheet = new_worksheet(id, "Sheet 1".to_owned(), DataModelId::new("m1"));
+        self.workbook.worksheets.push(worksheet);
+        self.active = 0;
+        self.refresh();
     }
 
     /// The workbook document.
@@ -2537,6 +2647,52 @@ mod tests {
         let mut session = Session::new();
         session.load_file(&path, SourceFormat::Csv).expect("loads");
         (session, path)
+    }
+
+    #[test]
+    fn a_new_workbook_is_empty_with_one_worksheet() {
+        let mut session = Session::new();
+        session.new_workbook();
+        assert_eq!(session.worksheet_count(), 1);
+        assert!(!session.has_source());
+        assert!(session.scene().is_none());
+        assert!(session.error().is_none());
+        let (dimensions, measures) = session.field_groups();
+        assert!(dimensions.is_empty() && measures.is_empty());
+    }
+
+    #[test]
+    fn recent_files_keep_five_newest_first_and_persist() {
+        let store = temp("recent.json");
+        let mut files = Vec::new();
+        for index in 0..6 {
+            let path = temp(&format!("recent-{index}.scz"));
+            std::fs::write(&path, b"x").expect("writes a workbook placeholder");
+            files.push(path);
+        }
+
+        let mut recent = RecentFiles::at(Some(store.clone()));
+        for path in &files {
+            recent.remember(path);
+        }
+        assert_eq!(recent.paths().len(), 5, "at most five recent workbooks");
+        let newest = std::fs::canonicalize(&files[5]).expect("canonical");
+        assert_eq!(recent.paths()[0], newest);
+        let dropped = std::fs::canonicalize(&files[0]).expect("canonical");
+        assert!(!recent.paths().iter().any(|path| path == &dropped));
+
+        let reloaded = RecentFiles::at(Some(store.clone()));
+        assert_eq!(reloaded.paths(), recent.paths(), "the list persists");
+
+        std::fs::remove_file(&files[2]).ok();
+        let mut pruned = RecentFiles::at(Some(store.clone()));
+        pruned.prune();
+        assert_eq!(pruned.paths().len(), 4, "a missing file is dropped");
+
+        for path in &files {
+            std::fs::remove_file(path).ok();
+        }
+        std::fs::remove_file(&store).ok();
     }
 
     #[test]
