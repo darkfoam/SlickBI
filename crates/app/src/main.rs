@@ -10,7 +10,7 @@ use slickbi_app::{Session, Shelf};
 use slickbi_connectors::DatabaseKind;
 use slickbi_engine::SourceFormat;
 use slickbi_scene::{Bar, LEGEND_HEIGHT, Scene, SeriesKind, TITLE_SPACE};
-use slickbi_spec::{Agg, Channel, FieldId, FilterOp, Mark, Role, Scalar};
+use slickbi_spec::{Agg, Channel, DataType, FieldId, FilterOp, Mark, Role, Scalar};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -81,6 +81,7 @@ struct SlickBiApp {
     format_decimals: u8,
     format_thousands: bool,
     format_currency: String,
+    format_pattern: String,
 
     connect_open: bool,
     connect_kind: DatabaseKind,
@@ -120,6 +121,7 @@ impl SlickBiApp {
             format_decimals: 0,
             format_thousands: false,
             format_currency: String::new(),
+            format_pattern: String::new(),
             connect_open: false,
             connect_kind: DatabaseKind::Sqlite,
             connect_location: String::new(),
@@ -447,6 +449,25 @@ impl SlickBiApp {
                 self.open_description(&id);
                 ui.close();
             }
+            ui.menu_button("Type", |ui| {
+                let current = self.session.field_type(&id);
+                for (data_type, label) in [
+                    (DataType::Text, "Text"),
+                    (DataType::Integer, "Integer"),
+                    (DataType::Number, "Number"),
+                    (DataType::Boolean, "Boolean"),
+                    (DataType::Date, "Date"),
+                    (DataType::Timestamp, "Timestamp"),
+                ] {
+                    if ui
+                        .selectable_label(current == Some(data_type), label)
+                        .clicked()
+                    {
+                        self.session.set_field_type(&id, data_type);
+                        ui.close();
+                    }
+                }
+            });
         });
     }
 
@@ -458,6 +479,11 @@ impl SlickBiApp {
 
     /// Loads a field's current format into the editor and opens it.
     fn open_format(&mut self, id: &FieldId) {
+        self.format_pattern = match self.session.field_type(id) {
+            Some(DataType::Date) => "%Y-%m-%d".to_owned(),
+            Some(DataType::Timestamp) => "%Y-%m-%d %H:%M".to_owned(),
+            _ => String::new(),
+        };
         match self.session.field_format(id) {
             Some(slickbi_spec::FieldFormat::Number {
                 decimals,
@@ -467,6 +493,12 @@ impl SlickBiApp {
                 self.format_decimals = decimals;
                 self.format_thousands = thousands;
                 self.format_currency = currency.unwrap_or_default();
+            }
+            Some(slickbi_spec::FieldFormat::Date { pattern }) => {
+                self.format_pattern = pattern;
+                self.format_decimals = 0;
+                self.format_thousands = false;
+                self.format_currency.clear();
             }
             _ => {
                 self.format_decimals = 0;
@@ -1404,6 +1436,10 @@ impl SlickBiApp {
         let Some(field) = self.format_field.clone() else {
             return;
         };
+        let temporal = matches!(
+            self.session.field_type(&field),
+            Some(DataType::Date | DataType::Timestamp)
+        );
         let mut open = true;
         egui::Window::new("Field format")
             .open(&mut open)
@@ -1414,22 +1450,38 @@ impl SlickBiApp {
                 let name = self.field_name(&field).unwrap_or_else(|| field.to_string());
                 ui.label(egui::RichText::new(name).strong());
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Decimals").small().weak());
-                    ui.add(egui::DragValue::new(&mut self.format_decimals).range(0..=6));
-                    ui.checkbox(&mut self.format_thousands, "Thousands");
-                });
-                ui.add_space(4.0);
-                ui.label(egui::RichText::new("Currency or prefix").small().weak());
-                ui.text_edit_singleline(&mut self.format_currency);
+                if temporal {
+                    ui.label(egui::RichText::new("Date pattern").small().weak());
+                    ui.text_edit_singleline(&mut self.format_pattern);
+                    ui.label(
+                        egui::RichText::new("Tokens: %Y %m %d %H %M %S")
+                            .small()
+                            .weak(),
+                    );
+                } else {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("Decimals").small().weak());
+                        ui.add(egui::DragValue::new(&mut self.format_decimals).range(0..=6));
+                        ui.checkbox(&mut self.format_thousands, "Thousands");
+                    });
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("Currency or prefix").small().weak());
+                    ui.text_edit_singleline(&mut self.format_currency);
+                }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Apply").clicked() {
-                        let currency = self.format_currency.trim();
-                        let format = slickbi_spec::FieldFormat::Number {
-                            decimals: self.format_decimals,
-                            thousands: self.format_thousands,
-                            currency: (!currency.is_empty()).then(|| currency.to_owned()),
+                        let format = if temporal {
+                            slickbi_spec::FieldFormat::Date {
+                                pattern: self.format_pattern.trim().to_owned(),
+                            }
+                        } else {
+                            let currency = self.format_currency.trim();
+                            slickbi_spec::FieldFormat::Number {
+                                decimals: self.format_decimals,
+                                thousands: self.format_thousands,
+                                currency: (!currency.is_empty()).then(|| currency.to_owned()),
+                            }
                         };
                         self.session.set_field_format(&field, Some(format));
                         self.format_field = None;

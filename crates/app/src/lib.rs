@@ -582,6 +582,37 @@ impl Session {
         self.refresh();
     }
 
+    /// The declared type of a field.
+    pub fn field_type(&self, field: &FieldId) -> Option<DataType> {
+        let worksheet = self.active_worksheet()?;
+        let model = self
+            .workbook
+            .models
+            .iter()
+            .find(|m| m.id == worksheet.model)?;
+        model
+            .fields
+            .iter()
+            .find(|candidate| &candidate.id == field)
+            .map(|candidate| candidate.data_type)
+    }
+
+    /// Changes a field's type; the planner casts the column to it, then re-renders.
+    pub fn set_field_type(&mut self, field: &FieldId, data_type: DataType) {
+        let Some(model_id) = self
+            .active_worksheet()
+            .map(|worksheet| worksheet.model.clone())
+        else {
+            return;
+        };
+        if let Some(model) = self.workbook.models.iter_mut().find(|m| m.id == model_id)
+            && let Some(candidate) = model.fields.iter_mut().find(|f| &f.id == field)
+        {
+            candidate.data_type = data_type;
+        }
+        self.refresh();
+    }
+
     /// The description of a field, if any.
     pub fn field_description(&self, field: &FieldId) -> Option<String> {
         let worksheet = self.active_worksheet()?;
@@ -1859,6 +1890,16 @@ mod tests {
         let table = scene.table.as_ref().expect("a table");
         assert_eq!(table.headers.len(), 2);
         assert!(!table.rows.is_empty(), "the table has rows");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_field_type_can_be_overridden() {
+        let (mut session, path) = loaded();
+        let amount = FieldId::new("amount");
+        assert_eq!(session.field_type(&amount), Some(DataType::Number));
+        session.set_field_type(&amount, DataType::Text);
+        assert_eq!(session.field_type(&amount), Some(DataType::Text));
         std::fs::remove_file(&path).ok();
     }
 

@@ -150,11 +150,19 @@ impl Model {
                         id: field.id.clone(),
                         binding: FieldBinding::new(
                             field.name.clone(),
-                            format!("{}.{}", table.sql_name, quote_ident(&column.name)),
-                            value_type_of(column.data_type),
+                            override_sql(field, table, column),
+                            value_type_of(if overrides(field, column) {
+                                field.data_type
+                            } else {
+                                column.data_type
+                            }),
                         ),
                         role: field.role,
-                        data_type: column.data_type,
+                        data_type: if overrides(field, column) {
+                            field.data_type
+                        } else {
+                            column.data_type
+                        },
                         format: field.format.clone(),
                         table: field.table.clone(),
                         aggregate: false,
@@ -427,6 +435,32 @@ pub fn quote_ident(name: &str) -> String {
     }
     quoted.push('"');
     quoted
+}
+
+/// Whether a field's declared type overrides the type the source reports for its column.
+fn overrides(field: &Field, column: &ResolvedColumn) -> bool {
+    field.data_type != column.data_type && field.data_type != DataType::Unknown
+}
+
+/// The SQL for a column field: a cast when the field overrides the column's type.
+fn override_sql(field: &Field, table: &ResolvedTable, column: &ResolvedColumn) -> String {
+    let reference = format!("{}.{}", table.sql_name, quote_ident(&column.name));
+    if overrides(field, column) {
+        format!("CAST({reference} AS {})", duckdb_type(field.data_type))
+    } else {
+        reference
+    }
+}
+
+fn duckdb_type(data_type: DataType) -> &'static str {
+    match data_type {
+        DataType::Integer => "BIGINT",
+        DataType::Number => "DOUBLE",
+        DataType::Text | DataType::Unknown => "VARCHAR",
+        DataType::Boolean => "BOOLEAN",
+        DataType::Date => "DATE",
+        DataType::Timestamp => "TIMESTAMP",
+    }
 }
 
 /// The calculation type that reads a column of this type.
@@ -1059,5 +1093,18 @@ mod tests {
                 currency: None,
             })
         );
+    }
+
+    #[test]
+    fn a_field_type_override_casts_the_column() {
+        let mut fields = base_fields();
+        // Revenue is a Number column; declare it as text to force a cast.
+        fields[2].data_type = DataType::Text;
+
+        let model = resolve(fields).expect("resolves");
+        let revenue = model.field_by_name("Revenue").expect("has Revenue");
+        assert_eq!(revenue.value_type(), ValueType::Text);
+        assert_eq!(revenue.data_type, DataType::Text);
+        assert!(revenue.sql().contains("CAST("), "sql: {}", revenue.sql());
     }
 }

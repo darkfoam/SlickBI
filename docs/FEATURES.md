@@ -49,7 +49,7 @@ that needs different data is a forked worksheet.
 |---|---|---|---|---|
 | M01 | Automatic typing into dimensions and measures | F | 0.0.2 | done |
 | M02 | Rename, hide, reorder and group fields into folders | F | 0.0.2 | planned |
-| M03 | Type override, number and date formats | F | 0.0.3 | in progress |
+| M03 | Type override, number and date formats | F | 0.0.3 | done |
 | M04 | Field descriptions | F | 0.0.3 | done |
 | M05 | Relationships between tables, with cardinality | F | 0.2.0 | planned |
 | M06 | Joins and unions in the data model | F | 0.2.0 | planned |

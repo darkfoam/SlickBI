@@ -365,8 +365,18 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
     }
     let plot = plot_rect(spec.size, margins);
 
-    let x = read_axis(spec.batches, x_index, false)?;
-    let y = read_axis(spec.batches, y_index, true)?;
+    let x = read_axis(
+        spec.batches,
+        x_index,
+        false,
+        column_format(spec.columns, ChannelKind::X),
+    )?;
+    let y = read_axis(
+        spec.batches,
+        y_index,
+        true,
+        column_format(spec.columns, ChannelKind::Y),
+    )?;
     let color = color_index
         .map(|index| read_labels(spec.batches, index))
         .transpose()?;
@@ -377,7 +387,7 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
         .position(|column| column.kind == ChannelKind::Size)
     {
         Some(index) => Some(
-            read_axis(spec.batches, index, true)?
+            read_axis(spec.batches, index, true, None)?
                 .into_numeric()
                 .ok_or(SceneError::UndrawableYType)?,
         ),
@@ -1024,10 +1034,15 @@ fn table_scene(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
         .iter()
         .enumerate()
         .map(|(index, _)| {
-            read_axis(spec.batches, index, true)
+            read_axis(spec.batches, index, true, None)
                 .ok()
                 .and_then(XData::into_numeric)
         })
+        .collect();
+    let temporal: Vec<Option<Vec<Option<String>>>> = columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| read_temporal_labels(spec.batches, index, column.format.as_ref()))
         .collect();
 
     let mut rows: Vec<Vec<String>> = Vec::new();
@@ -1039,13 +1054,16 @@ fn table_scene(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
             }
             let mut cells = Vec::with_capacity(columns.len());
             for (index, column) in columns.iter().enumerate() {
-                let text = match &numeric[index] {
-                    Some(values) => match values.get(flat_row).copied().flatten() {
+                let text = if let Some(labels) = &temporal[index] {
+                    labels.get(flat_row).cloned().flatten().unwrap_or_default()
+                } else if let Some(values) = &numeric[index] {
+                    match values.get(flat_row).copied().flatten() {
                         Some(value) => format_number(value, column.format.as_ref()),
                         None => String::new(),
-                    },
-                    None => arrow::util::display::array_value_to_string(batch.column(index), row)
-                        .unwrap_or_default(),
+                    }
+                } else {
+                    arrow::util::display::array_value_to_string(batch.column(index), row)
+                        .unwrap_or_default()
                 };
                 cells.push(text);
             }
@@ -1308,7 +1326,146 @@ fn group_thousands(digits: &str) -> String {
 }
 
 /// Reads one axis as either categorical (text) or numeric, depending on the column's type.
-fn read_axis(batches: &[RecordBatch], index: usize, y: bool) -> Result<XData, SceneError> {
+/// How a temporal Arrow column counts time.
+#[derive(Debug, Clone, Copy)]
+enum TemporalUnit {
+    Day,
+    Second,
+    Millisecond,
+    Microsecond,
+    Nanosecond,
+}
+
+/// Reads a temporal column as raw integer ticks, or `None` when the column is not temporal.
+fn temporal_raw(column: &dyn Array) -> Option<(Vec<Option<i64>>, TemporalUnit)> {
+    use arrow::datatypes::TimeUnit;
+    let unit = match column.data_type() {
+        ArrowDataType::Date32 => TemporalUnit::Day,
+        ArrowDataType::Date64 => TemporalUnit::Millisecond,
+        ArrowDataType::Timestamp(unit, _) => match unit {
+            TimeUnit::Second => TemporalUnit::Second,
+            TimeUnit::Millisecond => TemporalUnit::Millisecond,
+            TimeUnit::Microsecond => TemporalUnit::Microsecond,
+            TimeUnit::Nanosecond => TemporalUnit::Nanosecond,
+        },
+        _ => return None,
+    };
+    let cast = arrow::compute::cast(column, &ArrowDataType::Int64).ok()?;
+    let array = cast.as_any().downcast_ref::<arrow::array::Int64Array>()?;
+    Some((
+        (0..array.len())
+            .map(|i| (!array.is_null(i)).then(|| array.value(i)))
+            .collect(),
+        unit,
+    ))
+}
+
+/// Reads a temporal column as formatted labels, or `None` when the column is not temporal.
+fn read_temporal_labels(
+    batches: &[RecordBatch],
+    index: usize,
+    format: Option<&FieldFormat>,
+) -> Option<Vec<Option<String>>> {
+    let mut labels = Vec::new();
+    let mut unit = None;
+    for batch in batches {
+        let (raw, batch_unit) = temporal_raw(batch.column(index))?;
+        let unit = *unit.get_or_insert(batch_unit);
+        labels.extend(
+            raw.into_iter()
+                .map(|value| value.map(|ticks| format_temporal(ticks, unit, format))),
+        );
+    }
+    Some(labels)
+}
+
+/// Formats one temporal tick value with a `%Y-%m-%d %H:%M:%S`-style pattern.
+fn format_temporal(value: i64, unit: TemporalUnit, format: Option<&FieldFormat>) -> String {
+    let (days, seconds) = match unit {
+        TemporalUnit::Day => (value, 0),
+        TemporalUnit::Second => split_ticks(value, 1),
+        TemporalUnit::Millisecond => split_ticks(value, 1_000),
+        TemporalUnit::Microsecond => split_ticks(value, 1_000_000),
+        TemporalUnit::Nanosecond => split_ticks(value, 1_000_000_000),
+    };
+    let (year, month, day) = civil_from_days(days);
+    let seconds_of_day = seconds.rem_euclid(86_400);
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    let pattern = match format {
+        Some(FieldFormat::Date { pattern }) if !pattern.is_empty() => pattern.as_str(),
+        _ if matches!(unit, TemporalUnit::Day) => "%Y-%m-%d",
+        _ => "%Y-%m-%d %H:%M",
+    };
+    apply_date_pattern(pattern, year, month, day, hour, minute, second)
+}
+
+fn split_ticks(value: i64, per_second: i64) -> (i64, i64) {
+    let ticks_per_day = per_second * 86_400;
+    let days = value.div_euclid(ticks_per_day);
+    let seconds = value.rem_euclid(ticks_per_day) / per_second;
+    (days, seconds)
+}
+
+/// Converts days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+fn apply_date_pattern(
+    pattern: &str,
+    year: i64,
+    month: u32,
+    day: u32,
+    hour: i64,
+    minute: i64,
+    second: i64,
+) -> String {
+    let mut out = String::with_capacity(pattern.len() + 8);
+    let mut chars = pattern.chars();
+    while let Some(character) = chars.next() {
+        if character != '%' {
+            out.push(character);
+            continue;
+        }
+        match chars.next() {
+            Some('Y') => out.push_str(&year.to_string()),
+            Some('m') => out.push_str(&format!("{month:02}")),
+            Some('d') => out.push_str(&format!("{day:02}")),
+            Some('H') => out.push_str(&format!("{hour:02}")),
+            Some('M') => out.push_str(&format!("{minute:02}")),
+            Some('S') => out.push_str(&format!("{second:02}")),
+            Some('%') => out.push('%'),
+            Some(other) => {
+                out.push('%');
+                out.push(other);
+            }
+            None => out.push('%'),
+        }
+    }
+    out
+}
+
+fn read_axis(
+    batches: &[RecordBatch],
+    index: usize,
+    y: bool,
+    format: Option<&FieldFormat>,
+) -> Result<XData, SceneError> {
+    if let Some(labels) = read_temporal_labels(batches, index, format) {
+        return Ok(XData::Categorical(labels));
+    }
+
     let mixed = || {
         if y {
             SceneError::MixedYTypes
@@ -1366,6 +1523,9 @@ fn read_axis(batches: &[RecordBatch], index: usize, y: bool) -> Result<XData, Sc
 
 /// Reads a column as categorical labels, one per row: text as-is, numbers formatted as text.
 fn read_labels(batches: &[RecordBatch], index: usize) -> Result<Vec<Option<String>>, SceneError> {
+    if let Some(labels) = read_temporal_labels(batches, index, None) {
+        return Ok(labels);
+    }
     let mut labels = Vec::new();
     for batch in batches {
         let column = batch.column(index);
@@ -2193,5 +2353,29 @@ mod tests {
         assert_eq!(table.rows.len(), 2);
         assert_eq!(table.rows[0][0], "A");
         assert_eq!(table.rows[0][1], "1");
+    }
+
+    #[test]
+    fn a_date_axis_is_labelled_and_formatted() {
+        let schema = Schema::new(vec![
+            Field::new("day", DataType::Date32, true),
+            Field::new("y", DataType::Float64, true),
+        ]);
+        let days = arrow::array::Date32Array::from(vec![0, 31]);
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(days), Arc::new(Float64Array::from(vec![1.0, 2.0]))],
+        )
+        .expect("batch");
+        let mut day = column(ChannelKind::X, "day");
+        day.format = Some(FieldFormat::Date {
+            pattern: "%d/%m/%Y".to_owned(),
+        });
+        let columns = vec![day, column(ChannelKind::Y, "y")];
+
+        let scene = build(&spec(Mark::Bar, &columns, &[batch])).expect("builds");
+        let texts: Vec<&str> = scene.x_axis.ticks.iter().map(|t| t.text.as_str()).collect();
+        assert!(texts.contains(&"01/01/1970"), "labels: {texts:?}");
+        assert!(texts.contains(&"01/02/1970"), "labels: {texts:?}");
     }
 }
