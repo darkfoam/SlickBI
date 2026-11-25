@@ -107,7 +107,7 @@ that needs different data is a forked worksheet.
 |---|---|---|---|---|
 | R01 | Report canvas with a tiled grid | F | 0.0.3 | done |
 | R02 | Chart elements that reference worksheets live | F | 0.0.3 | done |
-| R03 | Move, resize and reorder elements | F | 0.0.3 | planned |
+| R03 | Move, resize and reorder elements | F | 0.0.3 | done |
 | R04 | Text and markdown elements | F | 0.0.3 | done |
 | R05 | Per-element presentation overrides: title, legend, axes, padding, border | F | 0.0.3 | in progress |
 | R06 | Cross-filtering between report elements | F | 0.0.3 | planned |

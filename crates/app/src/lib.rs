@@ -35,6 +35,11 @@ pub enum Shelf {
 /// A field as owned data for the data pane: its identifier and display name.
 pub type FieldInfo = (FieldId, String);
 
+/// The smallest width a report element can be resized to, in points.
+const MIN_ELEMENT_WIDTH: f64 = 80.0;
+/// The smallest height a report element can be resized to, in points.
+const MIN_ELEMENT_HEIGHT: f64 = 60.0;
+
 /// The application state.
 pub struct Session {
     engine: Engine,
@@ -477,6 +482,48 @@ impl Session {
             && index < report.elements.len()
         {
             report.elements.remove(index);
+        }
+    }
+
+    /// Moves a report element by `(dx, dy)` points, keeping it on the canvas.
+    pub fn move_element(&mut self, report: usize, index: usize, dx: f64, dy: f64) {
+        let Some(report) = self.workbook.reports.get_mut(report) else {
+            return;
+        };
+        let canvas = report.canvas;
+        let Some(element) = report.elements.get_mut(index) else {
+            return;
+        };
+        let max_x = (canvas.width - element.frame.width).max(0.0);
+        let max_y = (canvas.height - element.frame.height).max(0.0);
+        element.frame.x = (element.frame.x + dx).clamp(0.0, max_x);
+        element.frame.y = (element.frame.y + dy).clamp(0.0, max_y);
+    }
+
+    /// Resizes a report element, keeping a usable minimum and staying on the canvas.
+    pub fn resize_element(&mut self, report: usize, index: usize, width: f64, height: f64) {
+        let Some(report) = self.workbook.reports.get_mut(report) else {
+            return;
+        };
+        let canvas = report.canvas;
+        let Some(element) = report.elements.get_mut(index) else {
+            return;
+        };
+        let max_width = (canvas.width - element.frame.x).max(MIN_ELEMENT_WIDTH);
+        let max_height = (canvas.height - element.frame.y).max(MIN_ELEMENT_HEIGHT);
+        element.frame.width = width.clamp(MIN_ELEMENT_WIDTH, max_width);
+        element.frame.height = height.clamp(MIN_ELEMENT_HEIGHT, max_height);
+    }
+
+    /// Moves an element earlier or later in draw order (and in the elements list).
+    pub fn reorder_element(&mut self, report: usize, index: usize, delta: isize) {
+        let Some(report) = self.workbook.reports.get_mut(report) else {
+            return;
+        };
+        let last = report.elements.len().saturating_sub(1) as isize;
+        let target = (index as isize + delta).clamp(0, last) as usize;
+        if target != index && index < report.elements.len() {
+            report.elements.swap(index, target);
         }
     }
 
@@ -1192,6 +1239,72 @@ mod tests {
 
         session.remove_report_element(0, 0);
         assert_eq!(session.reports()[0].elements.len(), 1);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn report_elements_move_and_stay_on_the_canvas() {
+        let (mut session, path) = loaded();
+        session.add_report("Layout");
+        let worksheet = session.active_worksheet().expect("ws").id.clone();
+        session.add_chart_to_report(&worksheet);
+        let canvas = session.reports()[0].canvas;
+
+        session.move_element(0, 0, 100.0, 50.0);
+        let frame = session.reports()[0].elements[0].frame;
+        assert!(frame.x > 0.0 && frame.y > 0.0);
+
+        // Pushing far past the right edge clamps so the frame stays inside.
+        session.move_element(0, 0, 100_000.0, 0.0);
+        let frame = session.reports()[0].elements[0].frame;
+        assert!((frame.x + frame.width - canvas.width).abs() < 1e-6);
+
+        // Pushing past the top-left clamps at the origin.
+        session.move_element(0, 0, -100_000.0, -100_000.0);
+        let frame = session.reports()[0].elements[0].frame;
+        assert_eq!((frame.x, frame.y), (0.0, 0.0));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn report_elements_resize_with_a_minimum_and_clamp_to_the_canvas() {
+        let (mut session, path) = loaded();
+        session.add_report("Layout");
+        let worksheet = session.active_worksheet().expect("ws").id.clone();
+        session.add_chart_to_report(&worksheet);
+        let canvas = session.reports()[0].canvas;
+
+        // Shrinking below the minimum keeps the minimum.
+        session.resize_element(0, 0, 1.0, 1.0);
+        let frame = session.reports()[0].elements[0].frame;
+        assert!(frame.width >= 80.0 - 1e-6);
+        assert!(frame.height >= 60.0 - 1e-6);
+
+        // Growing past the canvas clamps to the remaining space.
+        session.resize_element(0, 0, 100_000.0, 100_000.0);
+        let frame = session.reports()[0].elements[0].frame;
+        assert!((frame.x + frame.width - canvas.width).abs() < 1e-6);
+        assert!((frame.y + frame.height - canvas.height).abs() < 1e-6);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn report_elements_reorder() {
+        let (mut session, path) = loaded();
+        session.add_report("Layout");
+        let worksheet = session.active_worksheet().expect("ws").id.clone();
+        session.add_chart_to_report(&worksheet);
+        session.add_text_to_report("# Notes");
+        let first = session.reports()[0].elements[0].id.clone();
+        let second = session.reports()[0].elements[1].id.clone();
+
+        session.reorder_element(0, 0, 1);
+        assert_eq!(session.reports()[0].elements[0].id, second);
+        assert_eq!(session.reports()[0].elements[1].id, first);
+
+        // Reordering past the ends is a no-op, not an error.
+        session.reorder_element(0, 0, -5);
+        assert_eq!(session.reports()[0].elements[0].id, second);
         std::fs::remove_file(&path).ok();
     }
 

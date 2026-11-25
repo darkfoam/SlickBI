@@ -48,6 +48,14 @@ enum TabAction {
     Add,
 }
 
+/// An action requested by the report element list, applied after the list is drawn.
+enum ElementAction {
+    Remove(usize),
+    Reorder(usize, isize),
+    Move(usize, f64, f64),
+    Resize(usize, f64, f64),
+}
+
 struct SlickBiApp {
     session: Session,
     mode: Mode,
@@ -733,8 +741,15 @@ impl SlickBiApp {
             ui.label(egui::RichText::new("Nothing yet").weak().small());
         }
 
-        let mut remove = None;
+        let mut action: Option<ElementAction> = None;
         for index in 0..count {
+            let frame = self
+                .session
+                .reports()
+                .get(report)
+                .and_then(|report| report.elements.get(index))
+                .map(|element| element.frame);
+
             let worksheet = self
                 .session
                 .chart_element(report, index)
@@ -755,9 +770,7 @@ impl SlickBiApp {
                     .unwrap_or_default();
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(format!("Chart · {name}")).small());
-                    if ui.small_button("×").clicked() {
-                        remove = Some(index);
-                    }
+                    self.element_buttons(ui, index, &mut action);
                 });
                 let mut buffer = title;
                 if ui
@@ -779,9 +792,7 @@ impl SlickBiApp {
             {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Text").small());
-                    if ui.small_button("×").clicked() {
-                        remove = Some(index);
-                    }
+                    self.element_buttons(ui, index, &mut action);
                 });
                 let mut buffer = text;
                 if ui
@@ -795,14 +806,106 @@ impl SlickBiApp {
                     self.session.set_text_element(report, index, &buffer);
                 }
             }
+
+            if let Some(frame) = frame {
+                self.element_geometry(ui, index, frame, &mut action);
+            }
+            ui.separator();
         }
 
-        if let Some(index) = remove {
-            self.session.remove_report_element(report, index);
+        if let Some(action) = action {
+            match action {
+                ElementAction::Remove(index) => self.session.remove_report_element(report, index),
+                ElementAction::Reorder(index, delta) => {
+                    self.session.reorder_element(report, index, delta);
+                }
+                ElementAction::Move(index, dx, dy) => {
+                    self.session.move_element(report, index, dx, dy);
+                }
+                ElementAction::Resize(index, width, height) => {
+                    self.session.resize_element(report, index, width, height);
+                }
+            }
         }
     }
 
+    /// The reorder and remove buttons shown on each element row.
+    fn element_buttons(&self, ui: &mut egui::Ui, index: usize, action: &mut Option<ElementAction>) {
+        if ui
+            .small_button("↑")
+            .on_hover_text("Send backward")
+            .clicked()
+        {
+            *action = Some(ElementAction::Reorder(index, -1));
+        }
+        if ui
+            .small_button("↓")
+            .on_hover_text("Bring forward")
+            .clicked()
+        {
+            *action = Some(ElementAction::Reorder(index, 1));
+        }
+        if ui
+            .small_button("×")
+            .on_hover_text("Remove from report")
+            .clicked()
+        {
+            *action = Some(ElementAction::Remove(index));
+        }
+    }
+
+    /// The nudge and resize controls for one element.
+    fn element_geometry(
+        &self,
+        ui: &mut egui::Ui,
+        index: usize,
+        frame: slickbi_spec::Rect,
+        action: &mut Option<ElementAction>,
+    ) {
+        ui.horizontal(|ui| {
+            if ui.small_button("◀").on_hover_text("Move left").clicked() {
+                *action = Some(ElementAction::Move(index, -20.0, 0.0));
+            }
+            if ui.small_button("▲").on_hover_text("Move up").clicked() {
+                *action = Some(ElementAction::Move(index, 0.0, -20.0));
+            }
+            if ui.small_button("▼").on_hover_text("Move down").clicked() {
+                *action = Some(ElementAction::Move(index, 0.0, 20.0));
+            }
+            if ui.small_button("▶").on_hover_text("Move right").clicked() {
+                *action = Some(ElementAction::Move(index, 20.0, 0.0));
+            }
+            ui.label(egui::RichText::new("W").small().weak());
+            let mut width = frame.width as f32;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut width)
+                        .range(80.0..=4000.0)
+                        .speed(5.0),
+                )
+                .changed()
+            {
+                *action = Some(ElementAction::Resize(index, width as f64, frame.height));
+            }
+            ui.label(egui::RichText::new("H").small().weak());
+            let mut height = frame.height as f32;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut height)
+                        .range(60.0..=4000.0)
+                        .speed(5.0),
+                )
+                .changed()
+            {
+                *action = Some(ElementAction::Resize(index, frame.width, height as f64));
+            }
+        });
+    }
+
     fn report_canvas(&mut self, ui: &mut egui::Ui) {
+        /// Space reserved above an element's chart for its title, in points.
+        const TITLE_BAND: f32 = 22.0;
+
         if self.session.reports().is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.label(
@@ -817,6 +920,12 @@ impl SlickBiApp {
             return;
         };
 
+        // The report name is a document header, outside the element canvas, so an element's
+        // frame coordinates map directly onto the canvas with nothing hidden underneath.
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(&report.name).heading());
+        ui.add_space(6.0);
+
         let available = ui.available_size();
         let scale = (available.x / report.canvas.width as f32).clamp(0.2, 1.4);
         let size = egui::vec2(
@@ -829,16 +938,6 @@ impl SlickBiApp {
         let (background, ink) = theme_colors(report.theme.as_deref());
         painter.rect_filled(canvas_rect, 8.0, background);
 
-        // Report title.
-        painter.text(
-            canvas_rect.min + egui::vec2(20.0, 18.0),
-            egui::Align2::LEFT_TOP,
-            &report.name,
-            egui::FontId::proportional(22.0),
-            ink,
-        );
-
-        let content_top = canvas_rect.min.y + 52.0;
         let report_index = self.session.active_report();
         let mut remove = None;
 
@@ -846,7 +945,7 @@ impl SlickBiApp {
             let rect = egui::Rect::from_min_size(
                 egui::pos2(
                     canvas_rect.min.x + element.frame.x as f32 * scale,
-                    content_top + element.frame.y as f32 * scale,
+                    canvas_rect.min.y + element.frame.y as f32 * scale,
                 ),
                 egui::vec2(
                     element.frame.width as f32 * scale,
@@ -857,7 +956,33 @@ impl SlickBiApp {
 
             match &element.kind {
                 slickbi_spec::ElementKind::Chart { chart } => {
-                    let scaled = (rect.width(), rect.height());
+                    // The element title: the override, else the worksheet name, unless hidden.
+                    let show_title = chart.overrides.show_title.unwrap_or(true);
+                    let mut chart_rect = rect;
+                    if show_title && rect.height() > TITLE_BAND + 40.0 {
+                        let title = chart.title.clone().or_else(|| {
+                            self.session
+                                .workbook()
+                                .worksheets
+                                .iter()
+                                .find(|w| w.id == chart.worksheet)
+                                .map(|w| w.name.clone())
+                        });
+                        if let Some(title) = title {
+                            painter.text(
+                                rect.min,
+                                egui::Align2::LEFT_TOP,
+                                &title,
+                                egui::FontId::proportional(13.0),
+                                ink,
+                            );
+                            chart_rect = egui::Rect::from_min_max(
+                                rect.min + egui::vec2(0.0, TITLE_BAND),
+                                rect.max,
+                            );
+                        }
+                    }
+                    let scaled = (chart_rect.width(), chart_rect.height());
                     let scene = self
                         .session
                         .scene_for(&chart.worksheet, scaled)
@@ -865,22 +990,33 @@ impl SlickBiApp {
                         .flatten();
                     match scene {
                         Some(scene) => {
-                            draw_scene_in(ui, &scene, rect);
+                            draw_scene_in(ui, &scene, chart_rect);
                         }
                         None => {
                             painter.rect_filled(
-                                rect,
+                                chart_rect,
                                 6.0,
                                 egui::Color32::from_rgba_unmultiplied(0, 0, 0, 12),
                             );
                             painter.text(
-                                rect.center(),
+                                chart_rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 "No shelves yet",
                                 egui::FontId::proportional(13.0),
                                 egui::Color32::from_gray(140),
                             );
                         }
+                    }
+                    if chart.overrides.border == Some(true) {
+                        painter.rect_stroke(
+                            rect,
+                            4.0,
+                            egui::Stroke::new(
+                                1.0,
+                                egui::Color32::from_rgba_unmultiplied(0, 0, 0, 40),
+                            ),
+                            egui::StrokeKind::Inside,
+                        );
                     }
                 }
                 slickbi_spec::ElementKind::Text { text } => {
