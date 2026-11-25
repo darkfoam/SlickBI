@@ -947,7 +947,10 @@ impl Session {
         else {
             return Err("the worksheet is missing".to_owned());
         };
-        if worksheet.encoding.x.is_none() || worksheet.encoding.y.is_none() {
+        // A KPI tile needs no x or y shelf; every other mark does.
+        if worksheet.mark != Mark::Text
+            && (worksheet.encoding.x.is_none() || worksheet.encoding.y.is_none())
+        {
             return Ok(None);
         }
 
@@ -1783,6 +1786,21 @@ mod tests {
         assert_eq!(&bytes[..4], b"PAR1", "a parquet extract");
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(&out).ok();
+    }
+
+    #[test]
+    fn a_kpi_worksheet_builds_a_text_tile() {
+        let (mut session, path) = loaded();
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        session.set_mark(Mark::Text);
+        let scene = session
+            .scene()
+            .unwrap_or_else(|| panic!("no scene: {:?}", session.error()));
+        assert!(matches!(
+            &scene.series[0].kind,
+            slickbi_scene::SeriesKind::Text(_)
+        ));
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

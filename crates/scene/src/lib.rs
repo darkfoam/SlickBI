@@ -161,6 +161,8 @@ pub enum SeriesKind {
     Points(Vec<Point>),
     /// One wedge of a pie chart.
     Arc(ArcSlice),
+    /// A single formatted value, for a KPI tile.
+    Text(String),
 }
 
 /// One entry in a legend: the swatch colour and the series it names.
@@ -237,6 +239,11 @@ impl Default for SceneOptions {
 /// Returns [`SceneError`] when the encoding has no x or y shelf, the mark is not one the builder
 /// supports, a column is missing, or a column's values are not of a drawable type.
 pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
+    // A KPI tile is a single value: it needs no x or y shelf.
+    if spec.mark == Mark::Text {
+        return text_scene(spec);
+    }
+
     let x_index = spec
         .columns
         .iter()
@@ -701,6 +708,66 @@ fn arc_scene(
         x_title: None,
         y_title: None,
     })
+}
+
+/// A KPI tile: one formatted value, from the `text` shelf, else the y value, else the x value.
+fn text_scene(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
+    let index = [ChannelKind::Text, ChannelKind::Y, ChannelKind::X]
+        .into_iter()
+        .find_map(|kind| spec.columns.iter().position(|column| column.kind == kind))
+        .ok_or(SceneError::MissingShelf("text"))?;
+    let column = &spec.columns[index];
+    let value = read_text_value(spec.batches, index, column)?;
+
+    Ok(Scene {
+        width: spec.size.0,
+        height: spec.size.1,
+        plot: Rect {
+            x: 12.0,
+            y: 12.0,
+            width: (spec.size.0 - 24.0).max(1.0),
+            height: (spec.size.1 - 24.0).max(1.0),
+        },
+        x_axis: Axis {
+            ticks: Vec::new(),
+            categorical: false,
+        },
+        y_axis: Axis {
+            ticks: Vec::new(),
+            categorical: false,
+        },
+        series: vec![Series {
+            label: String::new(),
+            color: PALETTE[0],
+            kind: SeriesKind::Text(value),
+        }],
+        legend: Vec::new(),
+        x_title: None,
+        y_title: None,
+    })
+}
+
+/// Reads the first non-null value of a column as display text, applying its number format.
+fn read_text_value(
+    batches: &[RecordBatch],
+    index: usize,
+    column: &OutputColumn,
+) -> Result<String, SceneError> {
+    if let Some(values) = batches.iter().find_map(|batch| to_f64(batch.column(index)))
+        && let Some(value) = values.into_iter().flatten().next()
+    {
+        return Ok(format_number(value, column.format.as_ref()));
+    }
+    for batch in batches {
+        if let Some(array) = batch.column(index).as_any().downcast_ref::<StringArray>() {
+            for i in 0..array.len() {
+                if !array.is_null(i) {
+                    return Ok(array.value(i).to_owned());
+                }
+            }
+        }
+    }
+    Ok(String::new())
 }
 
 impl XData {
@@ -1334,8 +1401,8 @@ mod tests {
     fn an_unsupported_mark_is_rejected() {
         let columns = vec![column(ChannelKind::X, "x"), column(ChannelKind::Y, "y")];
         let batch = batch_numeric_y(&[1.0], &[2.0]);
-        let error = build(&spec(Mark::Text, &columns, &[batch])).expect_err("must fail");
-        assert_eq!(error, SceneError::UnsupportedMark { mark: Mark::Text });
+        let error = build(&spec(Mark::Rect, &columns, &[batch])).expect_err("must fail");
+        assert_eq!(error, SceneError::UnsupportedMark { mark: Mark::Rect });
     }
 
     #[test]
@@ -1664,5 +1731,28 @@ mod tests {
         let scene = build(&spec(Mark::Arc, &columns, &[batch])).expect("builds");
         assert!(scene.x_title.is_none());
         assert!(scene.y_title.is_none());
+    }
+
+    #[test]
+    fn a_kpi_tile_formats_its_value() {
+        let schema = Schema::new(vec![Field::new("total", DataType::Float64, true)]);
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(Float64Array::from(vec![1_234.0]))],
+        )
+        .expect("batch");
+        let mut total = column(ChannelKind::Text, "total");
+        total.format = Some(FieldFormat::Number {
+            decimals: 0,
+            thousands: true,
+            currency: Some("$".to_owned()),
+        });
+
+        let scene = build(&spec(Mark::Text, &[total], &[batch])).expect("builds");
+        let SeriesKind::Text(text) = &scene.series[0].kind else {
+            panic!("expected a text tile");
+        };
+        assert!(text.starts_with('$'), "currency: {text}");
+        assert!(text.contains(','), "thousands: {text}");
     }
 }

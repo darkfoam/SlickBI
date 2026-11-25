@@ -322,6 +322,7 @@ impl SlickBiApp {
                 (Mark::Point, "Point"),
                 (Mark::Arc, "Pie"),
                 (Mark::Donut, "Donut"),
+                (Mark::Text, "KPI"),
             ] {
                 let selected = self
                     .session
@@ -2018,6 +2019,15 @@ fn draw_scene_in(ui: &mut egui::Ui, scene: &Scene, rect: egui::Rect) {
                 }
             }
             SeriesKind::Arc(slice) => paint_arc(&painter, rect.min, slice, color),
+            SeriesKind::Text(text) => {
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    text,
+                    egui::FontId::proportional(30.0),
+                    egui::Color32::from_rgb(0x24, 0x2C, 0x36),
+                );
+            }
         }
     }
 

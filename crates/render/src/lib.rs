@@ -203,6 +203,15 @@ pub fn render_svg(scene: &Scene) -> String {
                     arc_path(slice)
                 );
             }
+            SeriesKind::Text(text) => {
+                let _ = write!(
+                    out,
+                    r#"<text x="{:.2}" y="{:.2}" font-family="{FONT}" font-size="30" fill="{AXIS_TEXT}" text-anchor="middle" dominant-baseline="middle">{}</text>"#,
+                    scene.width / 2.0,
+                    scene.height / 2.0,
+                    escape_xml(text)
+                );
+            }
         }
     }
 
@@ -493,6 +502,11 @@ impl Canvas {
                     }
                 }
                 SeriesKind::Arc(slice) => self.arc(slice, series.color),
+                SeriesKind::Text(text) => {
+                    let x = scene.width * self.scale / 2.0;
+                    let y = (scene.height / 2.0 - 18.0) * self.scale;
+                    self.text(text, 30.0, x, y, &TEXT, Anchor::Center);
+                }
             }
         }
     }

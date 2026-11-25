@@ -81,7 +81,7 @@ that needs different data is a forked worksheet.
 | V07 | Chart-level sort and row limit | F | 0.0.2 | done |
 | V08 | Heatmaps | F | 0.0.3 | planned |
 | V09 | Pie and donut charts | F | 0.0.3 | done |
-| V10 | KPI and text tiles | F | 0.0.3 | planned |
+| V10 | KPI and text tiles | F | 0.0.3 | done |
 | V11 | Colourblind-safe palettes by default | F | 0.0.3 | done |
 | V12 | Automatic chart suggestion from the current shelves | F | 0.0.3 | planned |
 | V13 | Dense marks: one million points at interactive frame rates | F | 0.0.4 | planned |
