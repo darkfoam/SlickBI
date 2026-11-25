@@ -1,6 +1,6 @@
 # MVP status map — 0.0.3 "Workbench"
 
-Snapshot: 2026-11-24. Updated after the database sources landed (D05–D07).
+Snapshot: 2026-11-25. Updated after the database sources and the continuous time axis landed.
 
 This is a **derived** map of what stands between the current tree and a completed MVP. The
 authoritative documents remain [`FEATURES.md`](FEATURES.md) (per-feature status),
@@ -29,7 +29,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **48 MVP-scope features**: **40 done, 1 partial, 7 not started**.
+At the snapshot, of the **49 MVP-scope features**: **41 done, 1 partial, 7 not started**.
 
 ---
 
@@ -55,7 +55,7 @@ At the snapshot, of the **48 MVP-scope features**: **40 done, 1 partial, 7 not s
 |---|---|---|---|---|
 | M01 | Auto typing into dims/measures | **Done** | `connectors::infer_role`; data pane split | — |
 | M02 | Rename / hide / reorder / folders | **Not started** | `Field` has `name`/`hidden`, but no API or UI. Rename is coupled to calculations (expressions reference `[Name]`), so it must rewrite references | M |
-| M03 | Type override, number and date formats | **Done** | Type override casts in SQL; number and date formats; dates are categorical dimensions | — |
+| M03 | Type override, number and date formats | **Done** | Type override casts in SQL; number and date formats; dates are categories in bars, continuous on line/area/point | — |
 | M04 | Field descriptions | **Done** | Editable from the data-pane menu, shown as a hover tooltip | — |
 
 ### Calculations
@@ -83,6 +83,7 @@ At the snapshot, of the **48 MVP-scope features**: **40 done, 1 partial, 7 not s
 | V10 | KPI and text tiles | **Done** | `Mark::Text` renders one formatted value, no axes needed | — |
 | V11 | Colourblind-safe palettes by default | **Done** | Okabe–Ito default palette; a test keeps the scene and theme in sync | — |
 | V12 | Automatic chart suggestion | **Not started** | — | M |
+| V23 | Continuous time axis for dates | **Done** | Temporal columns become numeric ticks with date-formatted ticks on line/area/point; bars and pies keep date categories. The motivating case is a bank balance over a month | — |
 | T01 | Tabs: create/rename/duplicate/close/reorder | **Done** | reorder added in `007cb37` | — |
 | T03 | "Used in" indicator | **Done** | `Session::used_in`, toolbar display | — |
 | T04 | Fork a worksheet | **Done** | `duplicate_worksheet` | — |
@@ -198,6 +199,8 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [x] **V04 tables** — `Mark::Table`, text-grid scene, all renderers, UI. **L**
 - [x] **V05 remaining shelves** — size/text/detail/tooltip through the scene and renderers. **M**
 - [ ] **V12 chart suggestion** — pick a mark from the current shelves. **M**
+- [x] **V23 continuous time axis** — temporal columns map to numeric ticks with date-formatted
+      ticks on line, area and point charts; bars and pies keep date categories. **S**
 
 ### Phase 3 — analytical core
 - [ ] **C03 parameters** — `Workbook.parameters`, filter binding, calc references, UI, planner
