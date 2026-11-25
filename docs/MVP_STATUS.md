@@ -30,7 +30,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **51 MVP-scope features**: **46 done, 1 partial, 4 not started**.
+At the snapshot, of the **51 MVP-scope features**: **47 done, 1 partial, 3 not started**.
 
 ---
 
@@ -81,7 +81,7 @@ At the snapshot, of the **51 MVP-scope features**: **46 done, 1 partial, 4 not s
 | V05 | Shelves: row, column, colour, size, text, detail, tooltip | **Done** | All seven; size scales points, text labels marks, detail splits, tooltip feeds hover | — |
 | V06 | Axis, legend and tooltip configuration | **Done** | Axis titles, legend/axes visibility, hover tooltips driven by the tooltip shelf | — |
 | V07 | Sort and row limit | **Done** | toolbar + planner `ORDER BY`/`LIMIT` | — |
-| V08 | Heatmaps | **Not started** | `Mark::Rect` exists; scene rejects it; needs a colour scale | M |
+| V08 | Heatmaps | **Done** | `Mark::Rect`: two categorical axes, a sequential blue ramp on the colour shelf, cell tooltips, both renderers | — |
 | V09 | Pie and donut | **Done** | Pie (`a6d91c9`) and donut (`f45f9de`), both with legends | — |
 | V10 | KPI and text tiles | **Done** | `Mark::Text` renders one formatted value, no axes needed | — |
 | V11 | Colourblind-safe palettes by default | **Done** | Okabe–Ito default palette; a test keeps the scene and theme in sync | — |
@@ -191,7 +191,7 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 
 ### Phase 2 — chart types (each needs the scene + both renderers)
 - [x] **V10 KPI/text tiles** — scene for `Mark::Text` (planner already plans it). **M**
-- [ ] **V08 heatmaps** — `Mark::Rect` + a sequential colour scale + two categorical axes. **M**
+- [x] **V08 heatmaps** — `Mark::Rect`, sequential colour ramp, two categorical axes. **M**
 - [x] **V04 tables** — `Mark::Table`, text-grid scene, all renderers, UI. **L**
 - [x] **V05 remaining shelves** — size/text/detail/tooltip through the scene and renderers. **M**
 - [ ] **V12 chart suggestion** — pick a mark from the current shelves. **M**

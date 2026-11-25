@@ -2085,8 +2085,35 @@ mod tests {
     }
 
     #[test]
-    fn a_date_column_on_a_line_builds_a_continuous_axis() {
-        let path = temp("balance.csv");
+    fn a_heatmap_is_built_from_two_dimensions_and_a_measure() {
+        let path = temp("heat.csv");
+        std::fs::write(
+            &path,
+            "row,col,value\nA,One,10\nB,One,20\nA,Two,30\nB,Two,40\n",
+        )
+        .expect("writes csv");
+        let mut session = Session::new();
+        session.load_file(&path, SourceFormat::Csv).expect("loads");
+        session.assign(Shelf::X, &FieldId::new("row"));
+        session.assign(Shelf::Y, &FieldId::new("col"));
+        session.assign(Shelf::Color, &FieldId::new("value"));
+        session.set_mark(Mark::Rect);
+
+        let scene = session
+            .scene()
+            .unwrap_or_else(|| panic!("scene: {:?}", session.error()));
+        let slickbi_scene::SeriesKind::Heat(cells) = &scene.series[0].kind else {
+            panic!("heat cells");
+        };
+        assert_eq!(cells.len(), 4);
+        assert_eq!(scene.x_axis.ticks.len(), 2);
+        assert_eq!(scene.y_axis.ticks.len(), 2);
+        assert!(scene.x_axis.categorical && scene.y_axis.categorical);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_date_column_on_a_line_builds_a_continuous_axis() {        let path = temp("balance.csv");
         std::fs::write(
             &path,
             "day,balance\n\

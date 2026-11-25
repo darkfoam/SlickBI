@@ -319,6 +319,20 @@ pub fn render_svg(scene: &Scene) -> String {
                     );
                 }
             }
+            SeriesKind::Heat(cells) => {
+                for cell in cells {
+                    let fill = hex(cell.color);
+                    let _ = write!(
+                        out,
+                        r#"<rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{fill}" fill-opacity="{}"/>"#,
+                        cell.x,
+                        cell.y,
+                        cell.width.max(0.0),
+                        cell.height.max(0.0),
+                        cell.color[3]
+                    );
+                }
+            }
             SeriesKind::Line(points) => {
                 if points.len() >= 2 {
                     let _ = write!(
@@ -691,6 +705,11 @@ impl Canvas {
                         self.bar(bar, series.color);
                     }
                 }
+                SeriesKind::Heat(cells) => {
+                    for cell in cells {
+                        self.heat_cell(cell);
+                    }
+                }
                 SeriesKind::Line(points) => self.line_series(points, series.color, false),
                 SeriesKind::Area(points) => self.line_series(points, series.color, true),
                 SeriesKind::Points(points) => {
@@ -899,6 +918,19 @@ impl Canvas {
         )
         .expect("valid rect");
         let paint = solid(color);
+        self.pixmap
+            .fill_rect(rect, &paint, Transform::identity(), None);
+    }
+
+    fn heat_cell(&mut self, cell: &slickbi_scene::HeatCell) {
+        let rect = Rect::from_xywh(
+            cell.x * self.scale,
+            cell.y * self.scale,
+            (cell.width * self.scale).max(1.0),
+            (cell.height * self.scale).max(1.0),
+        )
+        .expect("valid rect");
+        let paint = solid(cell.color);
         self.pixmap
             .fill_rect(rect, &paint, Transform::identity(), None);
     }
@@ -1204,6 +1236,48 @@ mod tests {
         assert!(png.len() > 1000, "a chart PNG should be more than a header");
         // PNG magic bytes.
         assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+    }
+
+    fn heat_scene() -> Scene {
+        let schema = Schema::new(vec![
+            Field::new("x", DataType::Utf8, true),
+            Field::new("y", DataType::Utf8, true),
+            Field::new("value", DataType::Float64, true),
+        ]);
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(arrow::array::StringArray::from(vec!["A", "B", "A", "B"])),
+                Arc::new(arrow::array::StringArray::from(vec![
+                    "One", "One", "Two", "Two",
+                ])),
+                Arc::new(Float64Array::from(vec![10.0, 20.0, 30.0, 40.0])),
+            ],
+        )
+        .expect("batch");
+        let columns = vec![
+            column(ChannelKind::X, "x"),
+            column(ChannelKind::Y, "y"),
+            column(ChannelKind::Color, "value"),
+        ];
+        let spec = SceneSpec {
+            mark: Mark::Rect,
+            columns: &columns,
+            batches: &[batch],
+            size: (400.0, 300.0),
+            margins: Margins::default(),
+            options: SceneOptions::default(),
+        };
+        build(&spec).expect("scene")
+    }
+
+    #[test]
+    fn a_heat_scene_renders_to_png_and_svg() {
+        let png = render_png(&heat_scene(), 1.0).expect("renders");
+        assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        let svg = render_svg(&heat_scene());
+        assert!(svg.contains("<rect"), "the cells are rectangles");
+        assert!(svg.contains("fill=\"#"), "each cell carries its own fill");
     }
 
     #[test]

@@ -375,6 +375,7 @@ impl SlickBiApp {
                 (Mark::Donut, "Donut"),
                 (Mark::Text, "KPI"),
                 (Mark::Table, "Table"),
+                (Mark::Rect, "Heatmap"),
             ] {
                 let selected = self
                     .session
@@ -2591,6 +2592,18 @@ fn draw_scene_in(ui: &mut egui::Ui, scene: &Scene, rect: egui::Rect) {
             SeriesKind::Bars(bars) => {
                 for bar in bars {
                     paint_bar(&painter, rect.min, bar, color);
+                }
+            }
+            SeriesKind::Heat(cells) => {
+                for cell in cells {
+                    painter.rect_filled(
+                        egui::Rect::from_min_size(
+                            rect.min + egui::vec2(cell.x, cell.y),
+                            egui::vec2(cell.width.max(0.0), cell.height.max(0.0)),
+                        ),
+                        0.0,
+                        to_color(cell.color),
+                    );
                 }
             }
             SeriesKind::Line(points) => paint_line(&painter, rect.min, points, color),

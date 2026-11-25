@@ -81,7 +81,7 @@ that needs different data is a forked worksheet.
 | V05 | Shelves: row, column, colour, size, text, detail, tooltip | F | 0.0.2 | done |
 | V06 | Axis, legend and tooltip configuration | F | 0.0.2 | done |
 | V07 | Chart-level sort and row limit | F | 0.0.2 | done |
-| V08 | Heatmaps | F | 0.0.3 | planned |
+| V08 | Heatmaps | F | 0.0.3 | done |
 | V09 | Pie and donut charts | F | 0.0.3 | done |
 | V10 | KPI and text tiles | F | 0.0.3 | done |
 | V11 | Colourblind-safe palettes by default | F | 0.0.3 | done |

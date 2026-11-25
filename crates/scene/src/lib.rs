@@ -156,6 +156,21 @@ pub struct Bar {
     pub height: f32,
 }
 
+/// One cell of a heatmap: a rectangle with its own sequential colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HeatCell {
+    /// The left edge of the cell.
+    pub x: f32,
+    /// The top edge of the cell.
+    pub y: f32,
+    /// The cell width.
+    pub width: f32,
+    /// The cell height.
+    pub height: f32,
+    /// The fill colour, RGBA, mapped from the value.
+    pub color: [f32; 4],
+}
+
 /// One wedge of a pie chart, in points and radians.
 ///
 /// Angles are measured clockwise from twelve o'clock: at `0` the point is directly above the
@@ -209,6 +224,8 @@ pub struct Series {
 pub enum SeriesKind {
     /// One rectangle per value.
     Bars(Vec<Bar>),
+    /// One coloured cell per category pair, for a heatmap.
+    Heat(Vec<HeatCell>),
     /// A connected line through the points.
     Line(Vec<Point>),
     /// A filled area down to the baseline, then the line on top.
@@ -327,7 +344,7 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
 
     // A pie colours by category and ignores the colour shelf, but still needs legend space.
     let pie = matches!(spec.mark, Mark::Arc | Mark::Donut);
-    let has_color = !pie && color_index.is_some();
+    let has_color = !pie && spec.mark != Mark::Rect && color_index.is_some();
     let show_axes = spec.options.show_axes && !pie;
     let show_legend = spec.options.show_legend && (has_color || pie);
 
@@ -425,6 +442,7 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
         Mark::Line => line_scene(spec, plot, x, numeric_y(y)?, false, color),
         Mark::Area => line_scene(spec, plot, x, numeric_y(y)?, true, color),
         Mark::Point => point_scene(spec, plot, x, numeric_y(y)?, color, &marks),
+        Mark::Rect => heat_scene(spec, plot, x, y, &marks),
         Mark::Arc => arc_scene(spec, plot, x, numeric_y(y)?, false),
         Mark::Donut => arc_scene(spec, plot, x, numeric_y(y)?, true),
         other => Err(SceneError::UnsupportedMark { mark: other }),
@@ -910,6 +928,149 @@ fn point_scene(
 /// Categories with a null, zero or negative value are left out, because a pie has no way to show
 /// them. Negative values are common in financial data, so this is a documented choice rather than
 /// an error: the caller sees the remaining slices and no wedge for the excluded category.
+/// A heatmap: one cell per (x, y) pair, coloured by a numeric measure on the colour shelf.
+fn heat_scene(
+    spec: &SceneSpec<'_>,
+    plot: Rect,
+    x: XData,
+    y: XData,
+    marks: &Marks,
+) -> Result<Scene, SceneError> {
+    let xs = x
+        .as_categories()
+        .ok_or(SceneError::CategoricalXExpected)?
+        .to_vec();
+    let ys = y
+        .as_categories()
+        .ok_or(SceneError::CategoricalYExpected)?
+        .to_vec();
+    let color_index = spec
+        .columns
+        .iter()
+        .position(|column| column.kind == ChannelKind::Color)
+        .ok_or(SceneError::MissingShelf("color"))?;
+    let format = column_format(spec.columns, ChannelKind::Color);
+    let values = read_axis(spec.batches, color_index, true, format)?
+        .into_numeric()
+        .ok_or(SceneError::NumericColorExpected)?;
+
+    let (distinct_x, x_of) = dedup(&xs);
+    let (distinct_y, y_of) = dedup(&ys);
+    let (low, high) = numeric_domain(&values);
+    let band_width = plot.width / distinct_x.len().max(1) as f32;
+    let band_height = plot.height / distinct_y.len().max(1) as f32;
+    let inset = if band_width.min(band_height) > 6.0 {
+        0.5
+    } else {
+        0.0
+    };
+    let color_title = column_title(spec.columns, ChannelKind::Color)
+        .unwrap_or_else(|| "Value".to_owned());
+
+    let mut cells = Vec::new();
+    let mut tooltips = Vec::new();
+    for (row, value) in values.iter().enumerate() {
+        let (Some(value), Some(x_position), Some(y_position)) =
+            (value, x_of.get(row), y_of.get(row))
+        else {
+            continue;
+        };
+        let t = if (high - low).abs() < f64::EPSILON {
+            0.5
+        } else {
+            ((value - low) / (high - low)).clamp(0.0, 1.0) as f32
+        };
+        let cell = HeatCell {
+            x: plot.x + *x_position as f32 * band_width + inset,
+            y: plot.y + *y_position as f32 * band_height + inset,
+            width: (band_width - inset * 2.0).max(0.0),
+            height: (band_height - inset * 2.0).max(0.0),
+            color: heat_color(t),
+        };
+        let text = format!(
+            "{}: {}\n{}: {}\n{}: {}",
+            marks.x_title,
+            xs.get(row).cloned().flatten().unwrap_or_default(),
+            marks.y_title,
+            ys.get(row).cloned().flatten().unwrap_or_default(),
+            color_title,
+            format_number(*value, format)
+        );
+        tooltips.push(TooltipMark {
+            x: cell.x + cell.width / 2.0,
+            y: cell.y + cell.height / 2.0,
+            radius: band_width.min(band_height) / 2.0,
+            text,
+        });
+        cells.push(cell);
+    }
+
+    let x_axis = Axis {
+        ticks: distinct_x
+            .iter()
+            .enumerate()
+            .map(|(index, category)| Tick {
+                position: plot.x + (index as f32 + 0.5) * band_width,
+                text: category.clone().unwrap_or_default(),
+            })
+            .collect(),
+        categorical: true,
+    };
+    let y_axis = Axis {
+        ticks: distinct_y
+            .iter()
+            .enumerate()
+            .map(|(index, category)| Tick {
+                position: plot.y + (index as f32 + 0.5) * band_height,
+                text: category.clone().unwrap_or_default(),
+            })
+            .collect(),
+        categorical: true,
+    };
+
+    Ok(Scene {
+        width: spec.size.0,
+        height: spec.size.1,
+        plot,
+        x_axis,
+        y_axis,
+        series: vec![Series {
+            label: String::new(),
+            color: [0.0; 4],
+            kind: SeriesKind::Heat(cells),
+        }],
+        legend: Vec::new(),
+        x_title: None,
+        y_title: None,
+        labels: Vec::new(),
+        tooltips,
+        table: None,
+    })
+}
+
+/// Maps a value in `0..=1` onto a five-stop blue ramp, light for low values and dark for high.
+fn heat_color(t: f32) -> [f32; 4] {
+    const STOPS: [[u8; 3]; 5] = [
+        [247, 251, 255],
+        [198, 219, 239],
+        [107, 174, 214],
+        [33, 113, 181],
+        [8, 48, 107],
+    ];
+    let t = t.clamp(0.0, 1.0);
+    let scaled = t * (STOPS.len() - 1) as f32;
+    let low = scaled.floor() as usize;
+    let high = (low + 1).min(STOPS.len() - 1);
+    let fraction = scaled - low as f32;
+    let mix = |a: u8, b: u8| a as f32 + (b as f32 - a as f32) * fraction;
+    [
+        mix(STOPS[low][0], STOPS[high][0]) / 255.0,
+        mix(STOPS[low][1], STOPS[high][1]) / 255.0,
+        mix(STOPS[low][2], STOPS[high][2]) / 255.0,
+        1.0,
+    ]
+}
+
 fn arc_scene(
     spec: &SceneSpec<'_>,
     plot: Rect,
@@ -1731,6 +1892,12 @@ pub enum SceneError {
     /// A bar chart with categorical x values also needs numeric y values.
     #[error("a bar chart with a categorical x axis needs numeric y values")]
     NumericYExpected,
+    /// A heatmap needs categorical y values.
+    #[error("a heatmap needs categorical y values, but the y shelf is numeric")]
+    CategoricalYExpected,
+    /// A heatmap needs a numeric colour value.
+    #[error("a heatmap needs a numeric colour value")]
+    NumericColorExpected,
     /// A line, area or scatter chart needs numeric x values.
     #[error("this mark needs numeric x values, but the x shelf is categorical")]
     NumericXExpected,
@@ -1963,11 +2130,45 @@ mod tests {
     }
 
     #[test]
-    fn an_unsupported_mark_is_rejected() {
-        let columns = vec![column(ChannelKind::X, "x"), column(ChannelKind::Y, "y")];
-        let batch = batch_numeric_y(&[1.0], &[2.0]);
-        let error = build(&spec(Mark::Rect, &columns, &[batch])).expect_err("must fail");
-        assert_eq!(error, SceneError::UnsupportedMark { mark: Mark::Rect });
+    fn a_heatmap_colours_one_cell_per_category_pair() {
+        let schema = Schema::new(vec![
+            Field::new("x", DataType::Utf8, true),
+            Field::new("y", DataType::Utf8, true),
+            Field::new("value", DataType::Float64, true),
+        ]);
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(StringArray::from(vec!["A", "B", "A", "B"])),
+                Arc::new(StringArray::from(vec!["One", "One", "Two", "Two"])),
+                Arc::new(Float64Array::from(vec![10.0, 20.0, 30.0, 40.0])),
+            ],
+        )
+        .expect("batch");
+        let columns = vec![
+            column(ChannelKind::X, "x"),
+            column(ChannelKind::Y, "y"),
+            column(ChannelKind::Color, "value"),
+        ];
+
+        let scene = build(&spec(Mark::Rect, &columns, &[batch])).expect("builds");
+        let SeriesKind::Heat(cells) = &scene.series[0].kind else {
+            panic!("heat cells");
+        };
+        assert_eq!(cells.len(), 4);
+        assert!(scene.x_axis.categorical && scene.y_axis.categorical);
+        let x_labels: Vec<&str> = scene.x_axis.ticks.iter().map(|tick| tick.text.as_str()).collect();
+        let y_labels: Vec<&str> = scene.y_axis.ticks.iter().map(|tick| tick.text.as_str()).collect();
+        assert_eq!(x_labels, vec!["A", "B"]);
+        assert_eq!(y_labels, vec!["One", "Two"]);
+        assert!(cells[0].x < cells[1].x, "the second column is further right");
+        assert!(cells[0].y < cells[2].y, "the second row is lower");
+        assert!(
+            cells[0].color[2] > cells[3].color[2],
+            "the lowest value is the lightest cell"
+        );
+        assert!(scene.tooltips[0].text.contains('A'));
+        assert!(scene.tooltips[0].text.contains("10"));
     }
 
     #[test]
