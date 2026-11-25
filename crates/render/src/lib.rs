@@ -99,6 +99,226 @@ pub fn render_preview_png(scene: &Scene) -> Result<Vec<u8>, RenderError> {
     encode_png(&pixmap)
 }
 
+/// Renders a scene to a standalone SVG document.
+///
+/// SVG is vector, so this is resolution-independent: the document carries the scene's point
+/// geometry directly. Text is emitted with the bundled Inter family and falls back to the system
+/// sans-serif; a print pipeline that needs pixel-exact type should embed the pinned font.
+///
+/// Every label is XML-escaped, because category values come from the user's data.
+pub fn render_svg(scene: &Scene) -> String {
+    use std::fmt::Write as _;
+
+    const AXIS_TEXT: &str = "#3d4754";
+    const GRID: &str = "#edf0f4";
+    const AXIS: &str = "#b8c0c9";
+    const FONT: &str = "Inter, sans-serif";
+
+    let width = scene.width.max(1.0);
+    let height = scene.height.max(1.0);
+    let plot = scene.plot;
+    let has_axes = !scene.x_axis.ticks.is_empty() || !scene.y_axis.ticks.is_empty();
+
+    let mut out = String::with_capacity(2048);
+    let _ = write!(
+        out,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width:.2}" height="{height:.2}" viewBox="0 0 {width:.2} {height:.2}">"#
+    );
+    let _ = write!(
+        out,
+        r##"<rect x="0" y="0" width="{width:.2}" height="{height:.2}" fill="#ffffff"/>"##
+    );
+
+    if has_axes {
+        for tick in &scene.y_axis.ticks {
+            let _ = write!(
+                out,
+                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{GRID}" stroke-width="1"/>"#,
+                plot.x,
+                tick.position,
+                plot.x + plot.width,
+                tick.position
+            );
+        }
+        let _ = write!(
+            out,
+            r#"<rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="none" stroke="{AXIS}" stroke-width="1"/>"#,
+            plot.x, plot.y, plot.width, plot.height
+        );
+    }
+
+    for series in &scene.series {
+        let fill = hex(series.color);
+        let opacity = series.color[3];
+        match &series.kind {
+            SeriesKind::Bars(bars) => {
+                for bar in bars {
+                    let _ = write!(
+                        out,
+                        r#"<rect x="{:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="{fill}" fill-opacity="{opacity:.3}"/>"#,
+                        bar.x,
+                        bar.y,
+                        bar.width.max(0.0),
+                        bar.height.max(0.0)
+                    );
+                }
+            }
+            SeriesKind::Line(points) => {
+                if points.len() >= 2 {
+                    let _ = write!(
+                        out,
+                        r#"<polyline points="{}" fill="none" stroke="{fill}" stroke-width="1.5" stroke-opacity="{opacity:.3}"/>"#,
+                        polyline(points)
+                    );
+                }
+            }
+            SeriesKind::Area(points) => {
+                if points.len() >= 2 {
+                    let _ = write!(
+                        out,
+                        r#"<polygon points="{}" fill="{fill}" fill-opacity="0.18"/>"#,
+                        area_polygon(points, plot.y + plot.height)
+                    );
+                    let _ = write!(
+                        out,
+                        r#"<polyline points="{}" fill="none" stroke="{fill}" stroke-width="1.5"/>"#,
+                        polyline(points)
+                    );
+                }
+            }
+            SeriesKind::Points(points) => {
+                for point in points {
+                    let _ = write!(
+                        out,
+                        r#"<circle cx="{:.2}" cy="{:.2}" r="2.5" fill="{fill}"/>"#,
+                        point.x, point.y
+                    );
+                }
+            }
+            SeriesKind::Arc(slice) => {
+                let _ = write!(
+                    out,
+                    r#"<path d="{}" fill="{fill}" fill-opacity="{opacity:.3}"/>"#,
+                    arc_path(slice)
+                );
+            }
+        }
+    }
+
+    if !scene.legend.is_empty() {
+        let mut x = plot.x;
+        let center_y = plot.y / 2.0;
+        for entry in &scene.legend {
+            let _ = write!(
+                out,
+                r#"<rect x="{x:.2}" y="{:.2}" width="10" height="10" fill="{}"/>"#,
+                center_y - 5.0,
+                hex(entry.color)
+            );
+            x += 14.0;
+            let _ = write!(
+                out,
+                r#"<text x="{x:.2}" y="{center_y:.2}" font-family="{FONT}" font-size="11" fill="{AXIS_TEXT}" dominant-baseline="middle">{}</text>"#,
+                escape_xml(&entry.label)
+            );
+            // A fixed advance keeps SVG layout independent of the reader's font metrics.
+            x += entry.label.chars().count() as f32 * 6.2 + 14.0;
+        }
+    }
+
+    if has_axes {
+        for tick in &scene.y_axis.ticks {
+            let _ = write!(
+                out,
+                r#"<text x="{:.2}" y="{:.2}" font-family="{FONT}" font-size="11" fill="{AXIS_TEXT}" text-anchor="end" dominant-baseline="middle">{}</text>"#,
+                plot.x - 6.0,
+                tick.position,
+                escape_xml(&tick.text)
+            );
+        }
+        for tick in &scene.x_axis.ticks {
+            let _ = write!(
+                out,
+                r#"<text x="{:.2}" y="{:.2}" font-family="{FONT}" font-size="11" fill="{AXIS_TEXT}" text-anchor="middle">{}</text>"#,
+                tick.position,
+                plot.y + plot.height + 15.0,
+                escape_xml(&tick.text)
+            );
+        }
+    }
+
+    out.push_str("</svg>");
+    out
+}
+
+/// A CSS hex colour from an RGBA array.
+fn hex(color: [f32; 4]) -> String {
+    let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        channel(color[0]),
+        channel(color[1]),
+        channel(color[2])
+    )
+}
+
+/// An SVG `points` list for a polyline.
+fn polyline(points: &[slickbi_scene::Point]) -> String {
+    let mut out = String::new();
+    for (index, point) in points.iter().enumerate() {
+        if index > 0 {
+            out.push(' ');
+        }
+        out.push_str(&format!("{:.2},{:.2}", point.x, point.y));
+    }
+    out
+}
+
+/// An SVG `points` list for a filled area, closed down to the baseline.
+fn area_polygon(points: &[slickbi_scene::Point], baseline: f32) -> String {
+    let mut out = polyline(points);
+    let last = points.last().expect("caller checks length");
+    let first = &points[0];
+    out.push_str(&format!(
+        " {:.2},{baseline:.2} {:.2},{baseline:.2}",
+        last.x, first.x
+    ));
+    out
+}
+
+/// An SVG path for a pie wedge, walked in short segments like the rasteriser.
+fn arc_path(slice: &slickbi_scene::ArcSlice) -> String {
+    let sweep = slice.end - slice.start;
+    let steps = ((sweep.abs() / std::f32::consts::TAU) * 90.0)
+        .ceil()
+        .max(2.0) as usize;
+    let mut out = format!("M {:.2} {:.2}", slice.center.x, slice.center.y);
+    for step in 0..=steps {
+        let angle = slice.start + sweep * (step as f32 / steps as f32);
+        let x = slice.center.x + slice.radius * angle.sin();
+        let y = slice.center.y - slice.radius * angle.cos();
+        out.push_str(&format!(" L {x:.2} {y:.2}"));
+    }
+    out.push_str(" Z");
+    out
+}
+
+/// Escapes the characters that would break an XML text node or attribute.
+fn escape_xml(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 struct Canvas {
     pixmap: Pixmap,
     scale: f32,
@@ -654,5 +874,32 @@ mod tests {
         let png = render_preview_png(&bar_scene()).expect("renders");
         assert!(png.len() > 1000);
         assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+    }
+
+    #[test]
+    fn an_svg_document_has_bars_in_the_series_colour() {
+        let svg = render_svg(&bar_scene());
+        assert!(svg.starts_with("<svg"), "starts with an svg root");
+        assert!(svg.ends_with("</svg>"));
+        // Background, one rect per bar (four bars) and the plot border.
+        assert!(svg.matches("<rect").count() >= 5, "expected bars as rects");
+        assert!(svg.contains("#0b6e99"), "bars use the first palette colour");
+        assert!(svg.contains("North"), "x-axis labels are present");
+    }
+
+    #[test]
+    fn an_svg_pie_draws_one_path_per_slice() {
+        let svg = render_svg(&pie_scene());
+        assert_eq!(svg.matches("<path").count(), 3, "one path per slice");
+        assert!(svg.contains("North"));
+        assert!(svg.contains("South"));
+    }
+
+    #[test]
+    fn svg_text_is_escaped() {
+        assert_eq!(
+            escape_xml("a & b < c > \"d'"),
+            "a &amp; b &lt; c &gt; &quot;d&apos;"
+        );
     }
 }

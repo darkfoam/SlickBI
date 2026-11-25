@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use slickbi_cli::{OutputFormat, compile, inspect, query, render_preview, render_print, validate};
+use slickbi_cli::{
+    OutputFormat, compile, inspect, query, render_preview, render_print, render_svg, validate,
+};
 use slickbi_entitlement::Entitlement;
 
 fn main() -> ExitCode {
@@ -71,7 +73,10 @@ fn run(args: &[String]) -> Result<String, slickbi_cli::CliError> {
             let height = flag(args, "--height")
                 .map(|v| v.parse().unwrap_or(600.0))
                 .unwrap_or(600.0);
-            if args.iter().any(|arg| arg == "--print") {
+            if args.iter().any(|arg| arg == "--svg") {
+                // Free until S03 verifies a signed entitlement token.
+                render_svg(&path, worksheet, &out, (width, height), Entitlement::free())?;
+            } else if args.iter().any(|arg| arg == "--print") {
                 let scale = flag(args, "--scale")
                     .map(|v| v.parse().unwrap_or(2.0))
                     .unwrap_or(2.0);
@@ -127,7 +132,7 @@ Usage:
   slickbi-cli inspect  FILE.scz
   slickbi-cli query    FILE.scz --worksheet <id|name> [--format table|csv]
   slickbi-cli render   FILE.scz --worksheet <id|name> --out chart.png [--width 800 --height 600]
-                       [--print (Pro) --scale 2]
+                       [--print (Pro) --scale 2] [--svg (Pro)]
 "
     .to_owned()
 }

@@ -130,7 +130,7 @@ that needs different data is a forked worksheet.
 |---|---|---|---|---|
 | X01 | Raw data export: CSV and Parquet of any result | F | 0.0.3 | done |
 | X02 | Preview PNG at 1× with a watermark | F | 0.0.4 | done |
-| X03 | Print-quality PNG (2–4×) and SVG | P | 0.0.4 | in progress |
+| X03 | Print-quality PNG (2–4×) and SVG | P | 0.0.4 | done |
 | X04 | Paginated PDF | P | 0.0.4 | planned |
 | X05 | Self-contained HTML report bundle | P | 0.1.0 | planned |
 | X06 | Batch and CLI print export | P | 0.2.0 | planned |

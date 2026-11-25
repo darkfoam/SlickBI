@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use slickbi_calc::ParamValue;
 use slickbi_cli::{
     Entitlement, EntitlementError, Feature, OutputFormat, compile, inspect, query, render_preview,
-    render_print, validate,
+    render_print, render_svg, validate,
 };
 use slickbi_engine::arrow::array::{Array, Float64Array, StringArray};
 use slickbi_engine::{Engine, SourceFormat};
@@ -271,6 +271,49 @@ fn print_export_requires_pro() {
     .expect("pro renders");
     let bytes = std::fs::read(&out).expect("reads");
     assert!(bytes.len() > 1000);
+    std::fs::remove_file(&out).ok();
+}
+
+#[test]
+fn svg_export_requires_pro() {
+    let path = fixture();
+    let out = std::env::temp_dir().join(format!(
+        "slickbi-svg-{}-{}.svg",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    let error = render_svg(
+        &path,
+        "Revenue by region",
+        &out,
+        (400.0, 300.0),
+        Entitlement::free(),
+    )
+    .expect_err("free must be refused");
+    match error {
+        slickbi_cli::CliError::Entitlement(EntitlementError::RequiresPro { feature }) => {
+            assert_eq!(feature, Feature::Svg);
+        }
+        other => panic!("expected a requires-Pro error, got {other:?}"),
+    }
+    assert!(!out.exists(), "a refused export writes no file");
+
+    render_svg(
+        &path,
+        "Revenue by region",
+        &out,
+        (400.0, 300.0),
+        Entitlement::pro(),
+    )
+    .expect("pro renders");
+    let svg = std::fs::read_to_string(&out).expect("reads");
+    assert!(svg.starts_with("<svg"));
+    assert!(svg.ends_with("</svg>"));
+    assert!(
+        svg.contains("APAC"),
+        "the category labels are in the document"
+    );
     std::fs::remove_file(&out).ok();
 }
 

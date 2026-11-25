@@ -171,6 +171,25 @@ pub fn render_print(
     Ok(())
 }
 
+/// Renders a worksheet to a standalone SVG, which requires a Pro entitlement.
+///
+/// # Errors
+///
+/// Returns [`CliError::Entitlement`] on the free tier, and the same errors as [`query`] plus scene
+/// failures.
+pub fn render_svg(
+    path: &Path,
+    worksheet: &str,
+    out: &Path,
+    size: (f32, f32),
+    entitlement: Entitlement,
+) -> Result<(), CliError> {
+    entitlement.require(Feature::Svg)?;
+    let scene = load_scene(path, worksheet, size)?;
+    std::fs::write(out, slickbi_render::render_svg(&scene))?;
+    Ok(())
+}
+
 /// Plans, executes and builds the scene for one worksheet's embedded extract.
 fn load_scene(path: &Path, worksheet: &str, size: (f32, f32)) -> Result<Scene, CliError> {
     let scz = Scz::open(path)?;
