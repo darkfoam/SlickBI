@@ -15,8 +15,9 @@ use slickbi_model::Model;
 use slickbi_planner::{PlanOptions, plan};
 use slickbi_scene::{Margins, Scene, SceneOptions, SceneSpec, build};
 use slickbi_spec::{
-    Agg, Channel, DataModelId, DataType, Field, FieldFormat, FieldId, FieldSource, Filter,
-    FilterOp, Mark, Report, Role, Scalar, SortKey, Workbook, Worksheet, WorksheetId,
+    Agg, Channel, Connection, ConnectionId, DataModelId, DataType, Field, FieldFormat, FieldId,
+    FieldSource, Filter, FilterOp, Mark, Report, Role, Scalar, SortKey, Workbook, Worksheet,
+    WorksheetId,
 };
 use slickbi_workbook::Scz;
 use thiserror::Error;
@@ -95,7 +96,7 @@ impl Session {
 
     /// Whether a data source has been loaded.
     pub fn has_source(&self) -> bool {
-        self.source.is_some()
+        !self.workbook.models.is_empty()
     }
 
     /// The number of worksheets.
@@ -176,6 +177,68 @@ impl Session {
         self.source = Some((path.to_owned(), format));
         self.refresh();
         Ok(())
+    }
+
+    /// Connects to a database table, imports it into the engine, and adds a worksheet.
+    ///
+    /// The password is used only for this connection and is never written to the workbook.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Connector`] when the database cannot be reached or read, or
+    /// [`SessionError::Engine`] when the imported rows cannot be registered.
+    pub fn connect_database(
+        &mut self,
+        kind: slickbi_connectors::DatabaseKind,
+        location: &str,
+        user: Option<&str>,
+        password: Option<&str>,
+        table: &str,
+    ) -> Result<(), SessionError> {
+        let source = database_source(kind, location, user, password, table);
+        let imported = slickbi_connectors::read_database(&source)?;
+        self.engine.register_rows(
+            slickbi_connectors::TABLE_NAME,
+            &imported.columns,
+            &imported.rows,
+        )?;
+
+        self.workbook.models.push(imported.model);
+        self.workbook.connections.push(Connection {
+            id: ConnectionId::new("c1"),
+            name: format!("{} · {table}", kind.label()),
+            kind: kind.connection_kind(),
+            location: location.to_owned(),
+            read_only: true,
+            options: [("table".to_owned(), table.to_owned())].into(),
+        });
+
+        let worksheet = new_worksheet(
+            self.unique_worksheet_id(),
+            format!("Sheet {}", self.workbook.worksheets.len() + 1),
+            DataModelId::new("m1"),
+        );
+        self.workbook.worksheets.push(worksheet);
+        self.active = self.workbook.worksheets.len() - 1;
+        self.source = None;
+        self.refresh();
+        Ok(())
+    }
+
+    /// Lists the tables a database exposes, without importing any of them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Connector`] when the database cannot be reached.
+    pub fn database_tables(
+        &self,
+        kind: slickbi_connectors::DatabaseKind,
+        location: &str,
+        user: Option<&str>,
+        password: Option<&str>,
+    ) -> Result<Vec<String>, SessionError> {
+        let source = database_source(kind, location, user, password, "");
+        Ok(slickbi_connectors::list_tables(&source)?)
     }
 
     /// Adds a new, empty worksheet and makes it active.
@@ -908,6 +971,25 @@ impl Drop for Session {
     }
 }
 
+fn database_source(
+    kind: slickbi_connectors::DatabaseKind,
+    location: &str,
+    user: Option<&str>,
+    password: Option<&str>,
+    table: &str,
+) -> slickbi_connectors::DatabaseSource {
+    slickbi_connectors::DatabaseSource {
+        kind,
+        location: location.to_owned(),
+        user: user.map(str::to_owned).filter(|value| !value.is_empty()),
+        password: password
+            .map(str::to_owned)
+            .filter(|value| !value.is_empty()),
+        table: table.to_owned(),
+        row_limit: 1_000_000,
+    }
+}
+
 fn new_worksheet(id: WorksheetId, name: String, model: DataModelId) -> Worksheet {
     Worksheet {
         id,
@@ -1049,6 +1131,53 @@ mod tests {
         assert_eq!(dimensions.len(), 1);
         assert_eq!(measures.len(), 2);
         assert!(session.has_source());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn connecting_to_sqlite_adds_a_queryable_worksheet() {
+        let path = temp("connect.sqlite");
+        {
+            let connection = rusqlite::Connection::open(&path).expect("opens");
+            connection
+                .execute_batch(
+                    "CREATE TABLE sales (region TEXT, amount INTEGER);
+                     INSERT INTO sales VALUES ('EMEA', 10), ('APAC', 5), ('EMEA', 2);",
+                )
+                .expect("seeds");
+        }
+
+        let mut session = Session::new();
+        session
+            .connect_database(
+                slickbi_connectors::DatabaseKind::Sqlite,
+                &path.to_string_lossy(),
+                None,
+                None,
+                "sales",
+            )
+            .expect("connects");
+
+        let (dimensions, measures) = session.field_groups();
+        assert!(
+            dimensions.iter().any(|(_, name)| name == "region"),
+            "dimensions"
+        );
+        assert!(
+            measures.iter().any(|(_, name)| name == "amount"),
+            "measures"
+        );
+        assert!(session.has_source());
+
+        // The imported table is a real DuckDB table, so a chart plans and queries end to end.
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        assert!(
+            session.scene().is_some(),
+            "scene builds: {:?}",
+            session.error()
+        );
+
         std::fs::remove_file(&path).ok();
     }
 

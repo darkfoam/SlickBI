@@ -20,6 +20,10 @@ use slickbi_spec::{
 };
 use thiserror::Error;
 
+mod database;
+
+pub use database::{DatabaseKind, DatabaseSource, DatabaseTable, list_tables, read_database};
+
 /// The name a discovered table registers under.
 pub const TABLE_NAME: &str = "data";
 
@@ -203,6 +207,9 @@ pub enum ConnectorError {
     /// The describe result was not the expected shape.
     #[error("the source schema was not in the expected shape")]
     UnexpectedSchema,
+    /// A database could not be read.
+    #[error("cannot read the database: {0}")]
+    Database(String),
 }
 
 #[cfg(test)]

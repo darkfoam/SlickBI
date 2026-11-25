@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 use slickbi_app::{Session, Shelf};
+use slickbi_connectors::DatabaseKind;
 use slickbi_engine::SourceFormat;
 use slickbi_scene::{Bar, Scene, SeriesKind};
 use slickbi_spec::{Agg, Channel, FieldId, FilterOp, Mark, Role, Scalar};
@@ -79,6 +80,15 @@ struct SlickBiApp {
     format_decimals: u8,
     format_thousands: bool,
     format_currency: String,
+
+    connect_open: bool,
+    connect_kind: DatabaseKind,
+    connect_location: String,
+    connect_user: String,
+    connect_password: String,
+    connect_table: String,
+    connect_tables: Vec<String>,
+    connect_error: Option<String>,
 }
 
 impl SlickBiApp {
@@ -104,6 +114,14 @@ impl SlickBiApp {
             format_decimals: 0,
             format_thousands: false,
             format_currency: String::new(),
+            connect_open: false,
+            connect_kind: DatabaseKind::Sqlite,
+            connect_location: String::new(),
+            connect_user: String::new(),
+            connect_password: String::new(),
+            connect_table: String::new(),
+            connect_tables: Vec::new(),
+            connect_error: None,
         }
     }
 
@@ -132,6 +150,9 @@ impl SlickBiApp {
                 && let Some(path) = rfd::FileDialog::new().pick_file()
             {
                 self.open_path(path);
+            }
+            if ui.button("Connect…").clicked() {
+                self.open_connect();
             }
             if ui.button("Save").clicked()
                 && let Some(path) = rfd::FileDialog::new()
@@ -1311,6 +1332,175 @@ impl SlickBiApp {
         }
     }
 
+    fn open_connect(&mut self) {
+        self.connect_open = true;
+        self.connect_error = None;
+        self.connect_tables.clear();
+    }
+
+    fn close_connect(&mut self) {
+        self.connect_open = false;
+        self.connect_error = None;
+        self.connect_password.clear();
+        self.connect_tables.clear();
+    }
+
+    fn connect_credentials(&self) -> (String, String) {
+        (
+            self.connect_user.trim().to_owned(),
+            self.connect_password.clone(),
+        )
+    }
+
+    fn list_database_tables(&mut self) {
+        let location = self.connect_location.trim().to_owned();
+        let (user, password) = self.connect_credentials();
+        match self.session.database_tables(
+            self.connect_kind,
+            &location,
+            (!user.is_empty()).then_some(user.as_str()),
+            (!password.is_empty()).then_some(password.as_str()),
+        ) {
+            Ok(tables) => {
+                if self.connect_table.is_empty() && tables.len() == 1 {
+                    self.connect_table = tables[0].clone();
+                }
+                self.connect_tables = tables;
+                self.connect_error = None;
+            }
+            Err(error) => self.connect_error = Some(error.to_string()),
+        }
+    }
+
+    fn connect_now(&mut self) {
+        let location = self.connect_location.trim().to_owned();
+        let table = self.connect_table.trim().to_owned();
+        if location.is_empty() || table.is_empty() {
+            self.connect_error = Some("A server or file and a table are required.".to_owned());
+            return;
+        }
+        let (user, password) = self.connect_credentials();
+        match self.session.connect_database(
+            self.connect_kind,
+            &location,
+            (!user.is_empty()).then_some(user.as_str()),
+            (!password.is_empty()).then_some(password.as_str()),
+            &table,
+        ) {
+            Ok(()) => self.close_connect(),
+            Err(error) => self.connect_error = Some(error.to_string()),
+        }
+    }
+
+    fn connect_window(&mut self, ctx: &egui::Context) {
+        if !self.connect_open {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("Connect to a database")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Type").small().weak());
+                    egui::ComboBox::from_id_salt("connect-kind")
+                        .selected_text(self.connect_kind.label())
+                        .show_ui(ui, |ui| {
+                            for kind in [
+                                DatabaseKind::Sqlite,
+                                DatabaseKind::Postgres,
+                                DatabaseKind::MySql,
+                            ] {
+                                ui.selectable_value(&mut self.connect_kind, kind, kind.label());
+                            }
+                        });
+                });
+                ui.add_space(4.0);
+
+                if self.connect_kind == DatabaseKind::Sqlite {
+                    ui.label(egui::RichText::new("Database file").small().weak());
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.connect_location)
+                                .desired_width(f32::INFINITY),
+                        );
+                        if ui.button("Browse…").clicked()
+                            && let Some(path) = rfd::FileDialog::new()
+                                .add_filter("SQLite", &["db", "sqlite", "sqlite3"])
+                                .pick_file()
+                        {
+                            self.connect_location = path.to_string_lossy().into_owned();
+                        }
+                    });
+                } else {
+                    ui.label(
+                        egui::RichText::new("Server (host:port/database)")
+                            .small()
+                            .weak(),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.connect_location)
+                            .hint_text("127.0.0.1:5432/analytics")
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("User").small().weak());
+                    ui.text_edit_singleline(&mut self.connect_user);
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("Password").small().weak());
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.connect_password)
+                            .password(true)
+                            .desired_width(f32::INFINITY),
+                    );
+                }
+
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("Table").small().weak());
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.connect_table).desired_width(180.0),
+                    );
+                    if ui.button("List tables").clicked() {
+                        self.list_database_tables();
+                    }
+                    if !self.connect_tables.is_empty() {
+                        egui::ComboBox::from_id_salt("connect-tables")
+                            .selected_text("Pick…")
+                            .show_ui(ui, |ui| {
+                                for table in self.connect_tables.clone() {
+                                    if ui
+                                        .selectable_label(self.connect_table == table, &table)
+                                        .clicked()
+                                    {
+                                        self.connect_table = table;
+                                    }
+                                }
+                            });
+                    }
+                });
+
+                if let Some(error) = &self.connect_error {
+                    ui.add_space(4.0);
+                    ui.colored_label(egui::Color32::from_rgb(0xB0, 0x30, 0x20), error);
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Connect").clicked() {
+                        self.connect_now();
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.close_connect();
+                    }
+                });
+            });
+        if !open {
+            self.close_connect();
+        }
+    }
+
     fn delete_window(&mut self, ctx: &egui::Context) {
         let Some((index, used)) = self.pending_delete.clone() else {
             return;
@@ -1399,6 +1589,7 @@ impl eframe::App for SlickBiApp {
         self.filter_window(ui.ctx());
         self.delete_window(ui.ctx());
         self.format_window(ui.ctx());
+        self.connect_window(ui.ctx());
     }
 }
 

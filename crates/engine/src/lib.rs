@@ -50,6 +50,45 @@ pub enum SourceFormat {
     Json,
 }
 
+/// The storage type of a column imported from a database or another row source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageType {
+    /// A 64-bit signed integer.
+    BigInt,
+    /// A double-precision float.
+    Double,
+    /// A boolean.
+    Boolean,
+    /// Variable-length text.
+    VarChar,
+}
+
+impl StorageType {
+    fn sql_name(self) -> &'static str {
+        match self {
+            StorageType::BigInt => "BIGINT",
+            StorageType::Double => "DOUBLE",
+            StorageType::Boolean => "BOOLEAN",
+            StorageType::VarChar => "VARCHAR",
+        }
+    }
+}
+
+/// One cell in an imported row.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Cell {
+    /// A SQL NULL.
+    Null,
+    /// A whole number.
+    Integer(i64),
+    /// A floating-point number.
+    Number(f64),
+    /// A boolean.
+    Boolean(bool),
+    /// Text.
+    Text(String),
+}
+
 /// A single embedded DuckDB session.
 pub struct Engine {
     connection: Connection,
@@ -98,6 +137,39 @@ impl Engine {
         self.connection
             .execute(&sql, [])
             .map_err(EngineError::from)?;
+        Ok(())
+    }
+
+    /// Registers rows as a typed table named `name`, replacing any existing table.
+    ///
+    /// Used for sources that are not files, such as a database read through a driver. The columns
+    /// name and type the table; each row must supply one cell per column, in order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] if the table cannot be created or a value does not fit its column.
+    pub fn register_rows(
+        &self,
+        name: &str,
+        columns: &[(String, StorageType)],
+        rows: &[Vec<Cell>],
+    ) -> Result<(), EngineError> {
+        let definitions = columns
+            .iter()
+            .map(|(column, storage)| format!("{} {}", quote_ident(column), storage.sql_name()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.connection.execute_batch(&format!(
+            "CREATE OR REPLACE TABLE {} ({definitions})",
+            quote_ident(name)
+        ))?;
+
+        let mut appender = self.connection.appender(name)?;
+        for row in rows {
+            let values: Vec<duckdb::types::Value> = row.iter().map(cell_value).collect();
+            appender.append_row(duckdb::appender_params_from_iter(values))?;
+        }
+        appender.flush()?;
         Ok(())
     }
 
@@ -163,6 +235,17 @@ fn bind(value: &ParamValue) -> duckdb::types::Value {
     }
 }
 
+/// Maps an imported cell to DuckDB's dynamic value type.
+fn cell_value(cell: &Cell) -> duckdb::types::Value {
+    match cell {
+        Cell::Null => duckdb::types::Value::Null,
+        Cell::Integer(value) => duckdb::types::Value::BigInt(*value),
+        Cell::Number(value) => duckdb::types::Value::Double(*value),
+        Cell::Boolean(value) => duckdb::types::Value::Boolean(*value),
+        Cell::Text(value) => duckdb::types::Value::Text(value.clone()),
+    }
+}
+
 /// Quotes an identifier for SQL, doubling embedded quotes.
 fn quote_ident(name: &str) -> String {
     let mut quoted = String::with_capacity(name.len() + 2);
@@ -188,4 +271,76 @@ pub enum EngineError {
     /// DuckDB reported an error while opening, registering, or executing.
     #[error("query engine error: {0}")]
     DuckDb(#[from] duckdb::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registering_rows_creates_a_queryable_table() {
+        let engine = Engine::open().expect("opens");
+        engine
+            .register_rows(
+                "t",
+                &[
+                    ("region".to_owned(), StorageType::VarChar),
+                    ("amount".to_owned(), StorageType::BigInt),
+                ],
+                &[
+                    vec![Cell::Text("EMEA".into()), Cell::Integer(10)],
+                    vec![Cell::Text("APAC".into()), Cell::Integer(5)],
+                    vec![Cell::Text("EMEA".into()), Cell::Integer(2)],
+                ],
+            )
+            .expect("registers rows");
+
+        let result = engine
+            .execute(
+                "SELECT region, sum(amount) AS total FROM t GROUP BY region ORDER BY region",
+                &[],
+            )
+            .expect("queries");
+        assert_eq!(result.rows, 2);
+        let batch = &result.batches[0];
+        let regions = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::StringArray>()
+            .expect("text column");
+        assert_eq!(regions.value(0), "APAC");
+        assert_eq!(regions.value(1), "EMEA");
+    }
+
+    #[test]
+    fn a_null_cell_is_imported_as_null() {
+        let engine = Engine::open().expect("opens");
+        engine
+            .register_rows(
+                "n",
+                &[("value".to_owned(), StorageType::BigInt)],
+                &[vec![Cell::Null], vec![Cell::Integer(1)]],
+            )
+            .expect("registers rows");
+
+        let result = engine
+            .execute(
+                "SELECT count(*) AS total, count(value) AS present FROM n",
+                &[],
+            )
+            .expect("queries");
+        let batch = &result.batches[0];
+        let total = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::Int64Array>()
+            .expect("count");
+        let present = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow::array::Int64Array>()
+            .expect("count");
+        assert_eq!(total.value(0), 2);
+        assert_eq!(present.value(0), 1);
+    }
 }

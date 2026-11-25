@@ -1,6 +1,6 @@
 # MVP status map — 0.0.3 "Workbench"
 
-Snapshot: 2026-11-24, taken from the `dev` tree at `e6193dd`.
+Snapshot: 2026-11-24. Updated after the database sources landed (D05–D07).
 
 This is a **derived** map of what stands between the current tree and a completed MVP. The
 authoritative documents remain [`FEATURES.md`](FEATURES.md) (per-feature status),
@@ -29,7 +29,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **48 MVP-scope features**: **21 done, 15 partial, 12 not started**.
+At the snapshot, of the **48 MVP-scope features**: **24 done, 15 partial, 9 not started**.
 
 ---
 
@@ -43,9 +43,9 @@ At the snapshot, of the **48 MVP-scope features**: **21 done, 15 partial, 12 not
 | D02 | Excel `.xlsx` + sheet selection | **Not started** | DuckDB `excel` extension is disabled (no network auto-load); needs a reader crate (not in the local cargo cache) | L |
 | D03 | Parquet | **Done** | `read_parquet` discovery | — |
 | D04 | JSON / NDJSON | **Done** | `read_json_auto` | — |
-| D05 | SQLite | **Not started** | DuckDB `sqlite` extension disabled; needs extension or driver | L |
-| D06 | PostgreSQL | **Not started** | Needs driver + keychain credentials + read-only flow | XL |
-| D07 | MySQL / MariaDB | **Not started** | Same as D06 | XL |
+| D05 | SQLite | **Done** | Native `rusqlite` driver; columns read as text then typed into DuckDB; tested | — |
+| D06 | PostgreSQL | **Done** | Native `postgres` driver; verified against a real server | — |
+| D07 | MySQL / MariaDB | **Done** | Native `mysql` driver; verified against MariaDB | — |
 | D14 | Local extract to Parquet | **Partial** | `Session::save` embeds a Parquet extract per table; no user-facing "extract this source" action for arbitrary sources | M |
 | D15 | Live query mode | **Partial** | File sources are queried live; database live mode is not implemented (depends on D06/D07) | L |
 
@@ -120,7 +120,7 @@ At the snapshot, of the **48 MVP-scope features**: **21 done, 15 partial, 12 not
 | ID | Criterion (short) | Verdict | Gap to close |
 |---|---|---|---|
 | 01 | 500k CSV → fields < 3 s, no modal | **Partial** | Works; startup/ingest budget not measured |
-| 02 | Postgres field list + chart < 2 s | **Not met** | D06 missing |
+| 02 | Postgres field list + chart < 2 s | **Partial** | Connects through a native driver; first-chart budget not measured |
 | 03 | Rows/cols chart == hand-written GROUP BY | **Met** | golden SQL + engine tests |
 | 04 | Sum→Avg == AVG | **Met** | `changing_the_aggregation_changes_the_values` |
 | 05 | Filter totals == WHERE | **Met** | filter tests + golden SQL |
@@ -140,7 +140,7 @@ At the snapshot, of the **48 MVP-scope features**: **21 done, 15 partial, 12 not
 | 19 | 8 h soak, < 10 % memory growth | **Not met** | No soak test |
 | 20 | JSON Schema validates app output, zero errors | **Partial** | Schema generated; no validator run against output |
 
-Counts: **Met 8 · Partial 7 · Not met 5.**
+Counts: **Met 8 · Partial 8 · Not met 4.**
 
 ---
 
@@ -213,10 +213,13 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
       Unblocks **MVP-18**. **M**
 
 ### Phase 5 — sources (external dependencies / infrastructure)
+- [x] **D05 SQLite** — native `rusqlite` driver: read as text, typed into DuckDB. **L**
+- [x] **D06 Postgres** — native `postgres` driver, verified against a real server. **XL**
+- [x] **D07 MySQL / MariaDB** — native `mysql` driver, verified against MariaDB. **XL**
 - [ ] **D02 Excel** — reader crate (network to fetch). **L**
-- [ ] **D05 SQLite** — extension or driver. **L**
-- [ ] **D06 Postgres / D07 MySQL** — drivers, keychain credentials, read-only flow, timeouts. **XL**
-- [ ] **D14 / D15** — explicit extracts and live DB mode (depends on the above). **L**
+- [ ] **D14 / D15** — explicit extract action and live DB mode; save already embeds a Parquet
+      extract, but live mode is not built. **L**
+- [ ] Credentials in the OS keychain — currently session-only, and never persisted. **M**
 
 ### Phase 6 — format, acceptance and release hardening
 - [ ] **O01** spec document, **O02** publish the schema and validate the app's own output
@@ -246,6 +249,6 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [ ] No ignored tests, warnings, or TODOs without IDs
 - [ ] Tag `0.0.3` on `main`, merged back to `dev`
 
-The largest risks to the MVP are the two XL/L source phases (D06/D07/D02/D05) and C03/R06. The
+The largest risks to the MVP are the remaining source work (D02 Excel, D14/D15) and C03/R06. The
 cheapest large wins are Phase 1 (finish visible, half-built surface) and Phase 6 (acceptance
 hardening: CSV parity, schema validation, report render parity, soak gate).

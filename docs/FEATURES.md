@@ -29,9 +29,9 @@ that needs different data is a forked worksheet.
 | D02 | Excel workbooks (`.xlsx`) with sheet selection | F | 0.0.2 | planned |
 | D03 | Parquet | F | 0.0.2 | done |
 | D04 | JSON and newline-delimited JSON | F | 0.0.2 | done |
-| D05 | SQLite | F | 0.0.2 | planned |
-| D06 | PostgreSQL | F | 0.0.3 | planned |
-| D07 | MySQL and MariaDB | F | 0.0.3 | planned |
+| D05 | SQLite | F | 0.0.2 | done |
+| D06 | PostgreSQL | F | 0.0.3 | done |
+| D07 | MySQL and MariaDB | F | 0.0.3 | done |
 | D08 | DuckDB database files | F | 0.2.0 | planned |
 | D09 | BigQuery | F | 0.4.0 | planned |
 | D10 | Snowflake | F | 0.4.0 | planned |
