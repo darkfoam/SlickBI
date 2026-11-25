@@ -267,10 +267,13 @@ fn ensure_extracts(scz: &Scz, model: &Model) -> Result<(), CliError> {
 
 /// Registers every embedded extract as a table, returning the temp files to clean up later.
 fn register_extracts(engine: &Engine, scz: &Scz) -> Result<Vec<PathBuf>, CliError> {
+    // A per-call suffix keeps concurrent imports in one process from sharing a temp file.
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let mut temp_files = Vec::new();
     for (table, bytes) in scz.extracts() {
+        let unique = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "slickbi-extract-{}-{}.parquet",
+            "slickbi-extract-{}-{unique}-{}.parquet",
             std::process::id(),
             table
         ));
