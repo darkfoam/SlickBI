@@ -217,6 +217,15 @@ leaving the machine on our behalf.
 | U16 | Undo and redo across worksheets and reports | F | 0.1.0 | planned |
 | U17 | Keyboard shortcuts | F | 0.2.0 | planned |
 
+## Ideas recorded for later (not scheduled)
+
+Recorded so they are not lost. These are deliberately **not** scoped, estimated, or assigned to a
+release. They are not part of the MVP.
+
+| ID | Idea | Notes |
+|---|---|---|
+| I01 | An embedded Python 3 console that can use Pandas or Dask to modify and analyse data: data in, data out, with the result usable in charts. | Local analysis of your own data, so it would be free. A Julia and an R console would be welcome too. Not scheduled; no design decided. |
+
 ## Internal, not a feature
 
 Tracked here only so nobody reinvents them:
