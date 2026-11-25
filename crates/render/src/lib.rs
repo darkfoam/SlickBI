@@ -61,6 +61,7 @@ fn rasterize_with(scene: &Scene, scale: f32, watermark: bool) -> Pixmap {
 
     canvas.draw_axes(scene);
     canvas.draw_series(scene);
+    canvas.draw_labels(scene);
     canvas.draw_legend(scene);
     canvas.draw_titles(scene);
     if watermark {
@@ -191,8 +192,8 @@ pub fn render_svg(scene: &Scene) -> String {
                 for point in points {
                     let _ = write!(
                         out,
-                        r#"<circle cx="{:.2}" cy="{:.2}" r="2.5" fill="{fill}"/>"#,
-                        point.x, point.y
+                        r#"<circle cx="{:.2}" cy="{:.2}" r="{:.2}" fill="{fill}"/>"#,
+                        point.x, point.y, point.radius
                     );
                 }
             }
@@ -213,6 +214,16 @@ pub fn render_svg(scene: &Scene) -> String {
                 );
             }
         }
+    }
+
+    for label in &scene.labels {
+        let _ = write!(
+            out,
+            r#"<text x="{:.2}" y="{:.2}" font-family="{FONT}" font-size="10" fill="{AXIS_TEXT}" text-anchor="middle">{}</text>"#,
+            label.x,
+            label.y,
+            escape_xml(&label.text)
+        );
     }
 
     if !scene.legend.is_empty() {
@@ -498,7 +509,7 @@ impl Canvas {
                 SeriesKind::Area(points) => self.line_series(points, series.color, true),
                 SeriesKind::Points(points) => {
                     for point in points {
-                        self.circle(point.x, point.y, 2.5, series.color);
+                        self.circle(point.x, point.y, point.radius, series.color);
                     }
                 }
                 SeriesKind::Arc(slice) => self.arc(slice, series.color),
@@ -508,6 +519,20 @@ impl Canvas {
                     self.text(text, 30.0, x, y, &TEXT, Anchor::Center);
                 }
             }
+        }
+    }
+
+    /// Draws the data labels at their marks.
+    fn draw_labels(&mut self, scene: &Scene) {
+        for label in &scene.labels {
+            self.text(
+                &label.text,
+                10.0,
+                label.x * self.scale,
+                label.y * self.scale,
+                &TEXT,
+                Anchor::Center,
+            );
         }
     }
 

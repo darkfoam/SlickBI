@@ -76,8 +76,8 @@ that needs different data is a forked worksheet.
 | V02 | Line and area charts | F | 0.0.2 | done |
 | V03 | Scatter plots | F | 0.0.2 | done |
 | V04 | Tables | F | 0.0.2 | planned |
-| V05 | Shelves: row, column, colour, size, text, detail, tooltip | F | 0.0.2 | in progress |
-| V06 | Axis, legend and tooltip configuration | F | 0.0.2 | in progress |
+| V05 | Shelves: row, column, colour, size, text, detail, tooltip | F | 0.0.2 | done |
+| V06 | Axis, legend and tooltip configuration | F | 0.0.2 | done |
 | V07 | Chart-level sort and row limit | F | 0.0.2 | done |
 | V08 | Heatmaps | F | 0.0.3 | planned |
 | V09 | Pie and donut charts | F | 0.0.3 | done |

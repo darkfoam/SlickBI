@@ -87,6 +87,41 @@ pub struct Point {
     pub y: f32,
 }
 
+/// A scatter point with its own radius, so a size shelf can vary it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScatterPoint {
+    /// Horizontal position.
+    pub x: f32,
+    /// Vertical position.
+    pub y: f32,
+    /// The drawn radius.
+    pub radius: f32,
+}
+
+/// A data label drawn at a mark.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Label {
+    /// Horizontal position of the label's centre.
+    pub x: f32,
+    /// Vertical position of the label's baseline.
+    pub y: f32,
+    /// The text.
+    pub text: String,
+}
+
+/// A hover target: where a mark sits, its hit radius, and the tooltip text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TooltipMark {
+    /// Horizontal position.
+    pub x: f32,
+    /// Vertical position.
+    pub y: f32,
+    /// How close the pointer must be, in points.
+    pub radius: f32,
+    /// The tooltip text, with one line per configured field.
+    pub text: String,
+}
+
 /// One bar, `y` and `height` measured downward from the top of the bar.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bar {
@@ -158,7 +193,7 @@ pub enum SeriesKind {
     /// A filled area down to the baseline, then the line on top.
     Area(Vec<Point>),
     /// One point per value.
-    Points(Vec<Point>),
+    Points(Vec<ScatterPoint>),
     /// One wedge of a pie chart.
     Arc(ArcSlice),
     /// A single formatted value, for a KPI tile.
@@ -195,6 +230,10 @@ pub struct Scene {
     pub x_title: Option<String>,
     /// The vertical axis title, when the chart shows axes.
     pub y_title: Option<String>,
+    /// Data labels drawn at marks.
+    pub labels: Vec<Label>,
+    /// Hover targets with their tooltip text.
+    pub tooltips: Vec<TooltipMark>,
 }
 
 /// Everything needed to build a scene.
@@ -305,14 +344,50 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
         .map(|index| read_labels(spec.batches, index))
         .transpose()?;
 
+    let size_values = match spec
+        .columns
+        .iter()
+        .position(|column| column.kind == ChannelKind::Size)
+    {
+        Some(index) => Some(
+            read_axis(spec.batches, index, true)?
+                .into_numeric()
+                .ok_or(SceneError::UndrawableYType)?,
+        ),
+        None => None,
+    };
+    let text_values = spec
+        .columns
+        .iter()
+        .position(|column| column.kind == ChannelKind::Text)
+        .map(|index| read_labels(spec.batches, index))
+        .transpose()?;
+    let tooltip_values: Vec<(String, Vec<Option<String>>)> = spec
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(_, column)| matches!(column.kind, ChannelKind::Tooltip(_)))
+        .map(|(index, column)| Ok((column.title.clone(), read_labels(spec.batches, index)?)))
+        .collect::<Result<_, SceneError>>()?;
+    let size_domain = size_values.as_deref().map(numeric_domain);
+    let marks = Marks {
+        size: size_values.as_deref(),
+        text: text_values.as_deref(),
+        tooltip: &tooltip_values,
+        x_title: x_title.as_deref().unwrap_or(""),
+        y_title: y_title.as_deref().unwrap_or(""),
+        y_format: column_format(spec.columns, ChannelKind::Y),
+        size_domain,
+    };
+
     // Bars read either axis as the categories; the other marks need a numeric y.
     let numeric_y = |y: XData| y.into_numeric().ok_or(SceneError::UndrawableYType);
 
     let mut scene = match spec.mark {
-        Mark::Bar => bar_scene(spec, plot, x, y, color),
+        Mark::Bar => bar_scene(spec, plot, x, y, color, &marks),
         Mark::Line => line_scene(spec, plot, x, numeric_y(y)?, false, color),
         Mark::Area => line_scene(spec, plot, x, numeric_y(y)?, true, color),
-        Mark::Point => point_scene(spec, plot, x, numeric_y(y)?, color),
+        Mark::Point => point_scene(spec, plot, x, numeric_y(y)?, color, &marks),
         Mark::Arc => arc_scene(spec, plot, x, numeric_y(y)?, false),
         Mark::Donut => arc_scene(spec, plot, x, numeric_y(y)?, true),
         other => Err(SceneError::UnsupportedMark { mark: other }),
@@ -378,12 +453,72 @@ enum XData {
     Numeric(Vec<Option<f64>>),
 }
 
+/// Extra encodings that decorate marks: size, data labels and tooltips.
+struct Marks<'a> {
+    size: Option<&'a [Option<f64>]>,
+    text: Option<&'a [Option<String>]>,
+    tooltip: &'a [(String, Vec<Option<String>>)],
+    x_title: &'a str,
+    y_title: &'a str,
+    y_format: Option<&'a FieldFormat>,
+    size_domain: Option<(f64, f64)>,
+}
+
+impl Marks<'_> {
+    /// The drawn radius for one row: 2.5 by default, scaled 3–12 by the size shelf.
+    fn radius(&self, row: usize) -> f32 {
+        let Some(values) = self.size else {
+            return 2.5;
+        };
+        let Some(value) = values.get(row).copied().flatten() else {
+            return 2.5;
+        };
+        let Some((low, high)) = self.size_domain else {
+            return 2.5;
+        };
+        let span = (high - low).max(f64::EPSILON);
+        let t = ((value - low) / span).clamp(0.0, 1.0) as f32;
+        3.0 + 9.0 * t
+    }
+
+    /// The data label for one row, if the text shelf has a value.
+    fn label(&self, row: usize) -> Option<String> {
+        self.text
+            .and_then(|values| values.get(row).cloned().flatten())
+            .filter(|text| !text.is_empty())
+    }
+
+    /// The tooltip text for one row: the axis values plus every configured tooltip field.
+    fn tooltip_text(&self, row: usize, x: Option<String>, y: Option<f64>) -> String {
+        let mut lines = Vec::new();
+        if let Some(x) = x.filter(|x| !x.is_empty()) {
+            lines.push(format!("{}: {x}", self.x_title));
+        }
+        if let Some(y) = y {
+            lines.push(format!(
+                "{}: {}",
+                self.y_title,
+                format_number(y, self.y_format)
+            ));
+        }
+        for (title, values) in self.tooltip {
+            if let Some(value) = values.get(row).cloned().flatten()
+                && !value.is_empty()
+            {
+                lines.push(format!("{title}: {value}"));
+            }
+        }
+        lines.join("\n")
+    }
+}
+
 fn bar_scene(
     spec: &SceneSpec<'_>,
     plot: Rect,
     x: XData,
     y: XData,
     color: Option<Vec<Option<String>>>,
+    marks: &Marks,
 ) -> Result<Scene, SceneError> {
     // One axis is categorical (the categories) and the other numeric (the values). Categories on
     // x give vertical columns; categories on y give horizontal bars.
@@ -414,6 +549,8 @@ fn bar_scene(
     let scale = LinearScale::with_zero(numeric_domain(&values));
 
     let mut series = Vec::with_capacity(groups.len());
+    let mut labels = Vec::new();
+    let mut tooltips = Vec::new();
     for (index, (label, rows)) in groups.iter().enumerate() {
         let mut bars = Vec::new();
         for &row in rows {
@@ -421,29 +558,57 @@ fn bar_scene(
                 continue;
             };
             let category = category_of[row];
-            if vertical {
+            let category_text = distinct[category].clone().unwrap_or_default();
+            let (bar, label_x, label_y, tip_x, tip_y) = if vertical {
                 let center =
                     plot.x + band * category as f32 + sub_band * index as f32 + sub_band / 2.0;
                 let top = scale.map_y(value, plot.y, plot.height);
                 let bottom = scale.map_y(0.0, plot.y, plot.height);
-                bars.push(Bar {
-                    x: center - thickness / 2.0,
-                    y: top,
-                    width: thickness,
-                    height: bottom - top,
-                });
+                (
+                    Bar {
+                        x: center - thickness / 2.0,
+                        y: top,
+                        width: thickness,
+                        height: bottom - top,
+                    },
+                    center,
+                    top - 4.0,
+                    center,
+                    top + (bottom - top) / 2.0,
+                )
             } else {
                 let center =
                     plot.y + band * category as f32 + sub_band * index as f32 + sub_band / 2.0;
                 let start = scale.map(0.0, plot.x, plot.width);
                 let end = scale.map(value, plot.x, plot.width);
-                bars.push(Bar {
+                let bar = Bar {
                     x: start.min(end),
                     y: center - thickness / 2.0,
                     width: (end - start).abs(),
                     height: thickness,
+                };
+                (
+                    bar,
+                    bar.x + bar.width / 2.0,
+                    center - thickness / 2.0 - 4.0,
+                    bar.x + bar.width / 2.0,
+                    center,
+                )
+            };
+            bars.push(bar);
+            if let Some(text) = marks.label(row) {
+                labels.push(Label {
+                    x: label_x,
+                    y: label_y,
+                    text,
                 });
             }
+            tooltips.push(TooltipMark {
+                x: tip_x,
+                y: tip_y,
+                radius: (thickness / 2.0).max(7.0),
+                text: marks.tooltip_text(row, Some(category_text), Some(value)),
+            });
         }
         series.push(Series {
             label: label.clone(),
@@ -501,6 +666,8 @@ fn bar_scene(
         legend: Vec::new(),
         x_title: None,
         y_title: None,
+        labels,
+        tooltips,
     })
 }
 
@@ -512,6 +679,8 @@ fn line_scene(
     area: bool,
     color: Option<Vec<Option<String>>>,
 ) -> Result<Scene, SceneError> {
+    let labels = Vec::new();
+    let tooltips = Vec::new();
     let x_numeric = x.as_numeric().ok_or(SceneError::NumericXExpected)?;
 
     let groups = series_groups(&color, y.len());
@@ -575,6 +744,8 @@ fn line_scene(
         legend: Vec::new(),
         x_title: None,
         y_title: None,
+        labels,
+        tooltips,
     })
 }
 
@@ -584,6 +755,7 @@ fn point_scene(
     x: XData,
     y: Vec<Option<f64>>,
     color: Option<Vec<Option<String>>>,
+    marks: &Marks,
 ) -> Result<Scene, SceneError> {
     let x_numeric = x.as_numeric().ok_or(SceneError::NumericXExpected)?;
 
@@ -595,18 +767,37 @@ fn point_scene(
     let y_scale = LinearScale::new(y_domain);
 
     let mut series = Vec::with_capacity(groups.len());
+    let mut labels = Vec::new();
+    let mut tooltips = Vec::new();
     for (index, (label, rows)) in groups.iter().enumerate() {
-        let points: Vec<Point> = rows
-            .iter()
-            .filter_map(|&row| {
-                let x = x_numeric[row]?;
-                let y = y[row]?;
-                Some(Point {
-                    x: x_scale.map(x, plot.x, plot.width),
-                    y: y_scale.map_y(y, plot.y, plot.height),
-                })
-            })
-            .collect();
+        let mut points = Vec::new();
+        for &row in rows {
+            let Some(x) = x_numeric[row] else {
+                continue;
+            };
+            let Some(y) = y[row] else {
+                continue;
+            };
+            let position = ScatterPoint {
+                x: x_scale.map(x, plot.x, plot.width),
+                y: y_scale.map_y(y, plot.y, plot.height),
+                radius: marks.radius(row),
+            };
+            if let Some(text) = marks.label(row) {
+                labels.push(Label {
+                    x: position.x,
+                    y: position.y - position.radius - 2.0,
+                    text,
+                });
+            }
+            tooltips.push(TooltipMark {
+                x: position.x,
+                y: position.y,
+                radius: position.radius.max(6.0),
+                text: marks.tooltip_text(row, Some(format_number(x, None)), Some(y)),
+            });
+            points.push(position);
+        }
         series.push(Series {
             label: label.clone(),
             color: PALETTE[index % PALETTE.len()],
@@ -632,6 +823,8 @@ fn point_scene(
         legend: Vec::new(),
         x_title: None,
         y_title: None,
+        labels,
+        tooltips,
     })
 }
 
@@ -648,6 +841,8 @@ fn arc_scene(
     y: Vec<Option<f64>>,
     donut: bool,
 ) -> Result<Scene, SceneError> {
+    let labels = Vec::new();
+    let tooltips = Vec::new();
     let categories = x.as_categorical().ok_or(SceneError::CategoricalXExpected)?;
 
     let center = Point {
@@ -707,11 +902,15 @@ fn arc_scene(
         legend: Vec::new(),
         x_title: None,
         y_title: None,
+        labels,
+        tooltips,
     })
 }
 
 /// A KPI tile: one formatted value, from the `text` shelf, else the y value, else the x value.
 fn text_scene(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
+    let labels = Vec::new();
+    let tooltips = Vec::new();
     let index = [ChannelKind::Text, ChannelKind::Y, ChannelKind::X]
         .into_iter()
         .find_map(|kind| spec.columns.iter().position(|column| column.kind == kind))
@@ -744,6 +943,8 @@ fn text_scene(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
         legend: Vec::new(),
         x_title: None,
         y_title: None,
+        labels,
+        tooltips,
     })
 }
 
@@ -1754,5 +1955,105 @@ mod tests {
         };
         assert!(text.starts_with('$'), "currency: {text}");
         assert!(text.contains(','), "thousands: {text}");
+    }
+
+    #[test]
+    fn a_text_shelf_labels_the_marks() {
+        let schema = Schema::new(vec![
+            Field::new("x", DataType::Utf8, true),
+            Field::new("y", DataType::Float64, true),
+            Field::new("label", DataType::Utf8, true),
+        ]);
+        let mut x = StringBuilder::new();
+        x.append_value("A");
+        let mut label = StringBuilder::new();
+        label.append_value("hello");
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(x.finish()),
+                Arc::new(Float64Array::from(vec![1.0])),
+                Arc::new(label.finish()),
+            ],
+        )
+        .expect("batch");
+        let columns = vec![
+            column(ChannelKind::X, "x"),
+            column(ChannelKind::Y, "y"),
+            column(ChannelKind::Text, "label"),
+        ];
+
+        let scene = build(&spec(Mark::Bar, &columns, &[batch])).expect("builds");
+        assert_eq!(scene.labels.len(), 1);
+        assert_eq!(scene.labels[0].text, "hello");
+    }
+
+    #[test]
+    fn a_tooltip_shelf_feeds_the_tooltip() {
+        let schema = Schema::new(vec![
+            Field::new("x", DataType::Utf8, true),
+            Field::new("y", DataType::Float64, true),
+            Field::new("note", DataType::Utf8, true),
+        ]);
+        let mut x = StringBuilder::new();
+        x.append_value("A");
+        let mut note = StringBuilder::new();
+        note.append_value("detail");
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(x.finish()),
+                Arc::new(Float64Array::from(vec![1.0])),
+                Arc::new(note.finish()),
+            ],
+        )
+        .expect("batch");
+        let columns = vec![
+            column(ChannelKind::X, "x"),
+            column(ChannelKind::Y, "y"),
+            column(ChannelKind::Tooltip(0), "note"),
+        ];
+
+        let scene = build(&spec(Mark::Bar, &columns, &[batch])).expect("builds");
+        assert_eq!(scene.tooltips.len(), 1);
+        assert!(
+            scene.tooltips[0].text.contains("note: detail"),
+            "tooltip: {:?}",
+            scene.tooltips[0].text
+        );
+    }
+
+    #[test]
+    fn a_size_shelf_varies_point_radii() {
+        let schema = Schema::new(vec![
+            Field::new("x", DataType::Float64, true),
+            Field::new("y", DataType::Float64, true),
+            Field::new("size", DataType::Float64, true),
+        ]);
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(Float64Array::from(vec![1.0, 2.0])),
+                Arc::new(Float64Array::from(vec![1.0, 2.0])),
+                Arc::new(Float64Array::from(vec![1.0, 10.0])),
+            ],
+        )
+        .expect("batch");
+        let columns = vec![
+            column(ChannelKind::X, "x"),
+            column(ChannelKind::Y, "y"),
+            column(ChannelKind::Size, "size"),
+        ];
+
+        let scene = build(&spec(Mark::Point, &columns, &[batch])).expect("builds");
+        let SeriesKind::Points(points) = &scene.series[0].kind else {
+            panic!("expected points");
+        };
+        assert!(points[0].radius < points[1].radius, "{points:?}");
+        assert!(
+            points
+                .iter()
+                .all(|point| (3.0..=12.0).contains(&point.radius))
+        );
     }
 }

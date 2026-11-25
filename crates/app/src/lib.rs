@@ -31,6 +31,14 @@ pub enum Shelf {
     Y,
     /// The colour shelf: splits marks into a series per value.
     Color,
+    /// The size shelf: scales point marks.
+    Size,
+    /// The text shelf: labels marks.
+    Text,
+    /// The detail shelf: splits marks without a visual property.
+    Detail,
+    /// The tooltip shelf: fields shown on hover.
+    Tooltip,
 }
 
 /// A field as owned data for the data pane: its identifier and display name.
@@ -366,6 +374,10 @@ impl Session {
             Shelf::X => worksheet.encoding.x = Some(channel),
             Shelf::Y => worksheet.encoding.y = Some(channel),
             Shelf::Color => worksheet.encoding.color = Some(channel),
+            Shelf::Size => worksheet.encoding.size = Some(channel),
+            Shelf::Text => worksheet.encoding.text = Some(channel),
+            Shelf::Detail => worksheet.encoding.detail = vec![channel],
+            Shelf::Tooltip => worksheet.encoding.tooltip = vec![channel],
         }
         self.refresh();
     }
@@ -379,6 +391,10 @@ impl Session {
             Shelf::X => worksheet.encoding.x = None,
             Shelf::Y => worksheet.encoding.y = None,
             Shelf::Color => worksheet.encoding.color = None,
+            Shelf::Size => worksheet.encoding.size = None,
+            Shelf::Text => worksheet.encoding.text = None,
+            Shelf::Detail => worksheet.encoding.detail.clear(),
+            Shelf::Tooltip => worksheet.encoding.tooltip.clear(),
         }
         self.refresh();
     }
@@ -401,6 +417,10 @@ impl Session {
             Shelf::X => worksheet.encoding.x.as_mut(),
             Shelf::Y => worksheet.encoding.y.as_mut(),
             Shelf::Color => worksheet.encoding.color.as_mut(),
+            Shelf::Size => worksheet.encoding.size.as_mut(),
+            Shelf::Text => worksheet.encoding.text.as_mut(),
+            Shelf::Detail => worksheet.encoding.detail.first_mut(),
+            Shelf::Tooltip => worksheet.encoding.tooltip.first_mut(),
         };
         if let Some(channel) = channel {
             channel.agg = agg;
@@ -416,7 +436,7 @@ impl Session {
         let channel = match shelf {
             Shelf::X => worksheet.encoding.x.as_ref(),
             Shelf::Y => worksheet.encoding.y.as_ref(),
-            Shelf::Color => return,
+            Shelf::Color | Shelf::Size | Shelf::Text | Shelf::Detail | Shelf::Tooltip => return,
         };
         let Some(channel) = channel else {
             return;
@@ -1800,6 +1820,29 @@ mod tests {
             &scene.series[0].kind,
             slickbi_scene::SeriesKind::Text(_)
         ));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_tooltip_shelf_reaches_the_scene() {
+        let (mut session, path) = loaded();
+        session.assign(Shelf::X, &FieldId::new("units"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        session.assign(Shelf::Tooltip, &FieldId::new("region"));
+        session.set_mark(Mark::Point);
+
+        let scene = session
+            .scene()
+            .unwrap_or_else(|| panic!("no scene: {:?}", session.error()));
+        assert!(!scene.tooltips.is_empty(), "tooltips are built");
+        assert!(
+            scene
+                .tooltips
+                .iter()
+                .any(|mark| mark.text.contains("region")),
+            "tooltip text: {:?}",
+            scene.tooltips
+        );
         std::fs::remove_file(&path).ok();
     }
 

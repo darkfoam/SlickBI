@@ -483,6 +483,10 @@ impl SlickBiApp {
             (Shelf::X, "Columns", "Drop a dimension here"),
             (Shelf::Y, "Rows", "Drop a measure here"),
             (Shelf::Color, "Color", "Drop a dimension here to split"),
+            (Shelf::Size, "Size", "Drop a measure to size points"),
+            (Shelf::Text, "Text", "Drop a field to label marks"),
+            (Shelf::Detail, "Detail", "Drop a field to split marks"),
+            (Shelf::Tooltip, "Tooltip", "Drop a field for the tooltip"),
         ] {
             ui.label(egui::RichText::new(label).small());
             self.shelf_drop_zone(ui, shelf, hint);
@@ -525,6 +529,10 @@ impl SlickBiApp {
             Shelf::X => worksheet.encoding.x.clone(),
             Shelf::Y => worksheet.encoding.y.clone(),
             Shelf::Color => worksheet.encoding.color.clone(),
+            Shelf::Size => worksheet.encoding.size.clone(),
+            Shelf::Text => worksheet.encoding.text.clone(),
+            Shelf::Detail => worksheet.encoding.detail.first().cloned(),
+            Shelf::Tooltip => worksheet.encoding.tooltip.first().cloned(),
         }
     }
 
@@ -654,7 +662,7 @@ impl SlickBiApp {
                 Some((Shelf::X, true)) => "Columns ↓",
                 Some((Shelf::Y, false)) => "Rows ↑",
                 Some((Shelf::Y, true)) => "Rows ↓",
-                Some((Shelf::Color, _)) => "None",
+                Some(_) => "None",
             };
             egui::ComboBox::from_id_salt("sort-combo")
                 .selected_text(label)
@@ -1808,6 +1816,10 @@ fn shelf_id(shelf: Shelf) -> &'static str {
         Shelf::X => "agg-x",
         Shelf::Y => "agg-y",
         Shelf::Color => "agg-color",
+        Shelf::Size => "agg-size",
+        Shelf::Text => "agg-text",
+        Shelf::Detail => "agg-detail",
+        Shelf::Tooltip => "agg-tooltip",
     }
 }
 
@@ -1969,8 +1981,19 @@ fn parse_value(text: &str) -> Vec<Scalar> {
 
 fn draw_scene(ui: &mut egui::Ui, scene: &Scene) {
     let size = egui::vec2(scene.width, scene.height);
-    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
     draw_scene_in(ui, scene, rect);
+
+    if let Some(pointer) = response.hover_pos() {
+        let local = pointer - rect.min;
+        if let Some(mark) = scene.tooltips.iter().find(|mark| {
+            let dx = mark.x - local.x;
+            let dy = mark.y - local.y;
+            dx * dx + dy * dy <= mark.radius * mark.radius
+        }) {
+            response.on_hover_text(mark.text.as_str());
+        }
+    }
 }
 
 fn draw_scene_in(ui: &mut egui::Ui, scene: &Scene, rect: egui::Rect) {
@@ -2015,7 +2038,7 @@ fn draw_scene_in(ui: &mut egui::Ui, scene: &Scene, rect: egui::Rect) {
             SeriesKind::Points(points) => {
                 for point in points {
                     let center = rect.min + egui::vec2(point.x, point.y);
-                    painter.circle_filled(center, 2.5, color);
+                    painter.circle_filled(center, point.radius, color);
                 }
             }
             SeriesKind::Arc(slice) => paint_arc(&painter, rect.min, slice, color),
@@ -2029,6 +2052,16 @@ fn draw_scene_in(ui: &mut egui::Ui, scene: &Scene, rect: egui::Rect) {
                 );
             }
         }
+    }
+
+    for label in &scene.labels {
+        painter.text(
+            egui::pos2(rect.min.x + label.x, rect.min.y + label.y),
+            egui::Align2::CENTER_BOTTOM,
+            &label.text,
+            egui::FontId::proportional(10.0),
+            egui::Color32::from_rgb(0x24, 0x2C, 0x36),
+        );
     }
 
     let font = egui::FontId::proportional(11.0);
