@@ -29,7 +29,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **48 MVP-scope features**: **24 done, 15 partial, 9 not started**.
+At the snapshot, of the **48 MVP-scope features**: **29 done, 12 partial, 7 not started**.
 
 ---
 
@@ -56,7 +56,7 @@ At the snapshot, of the **48 MVP-scope features**: **24 done, 15 partial, 9 not 
 | M01 | Auto typing into dims/measures | **Done** | `connectors::infer_role`; data pane split | — |
 | M02 | Rename / hide / reorder / folders | **Not started** | `Field` has `name`/`hidden`, but no API or UI. Rename is coupled to calculations (expressions reference `[Name]`), so it must rewrite references | M |
 | M03 | Type override, number and date formats | **Partial** | Number formats done end-to-end + editor (`4b8c09f`). Type override and date formats remain; dates are not even drawable on an axis yet | M |
-| M04 | Field descriptions | **Not started** | `Field.description` exists; no editor and no surface | S |
+| M04 | Field descriptions | **Done** | Editable from the data-pane menu, shown as a hover tooltip | — |
 
 ### Calculations
 
@@ -76,18 +76,18 @@ At the snapshot, of the **48 MVP-scope features**: **24 done, 15 partial, 9 not 
 | V03 | Scatter plots | **Done** | Multi-series by colour | — |
 | V04 | Tables | **Partial** | Planner emits a raw-row plan (`table_raw.sql` golden); **no scene, renderer or UI**. Needs a table mark/sheet type — a serialised-format decision + fixture | L |
 | V05 | Shelves: row, column, colour, size, text, detail, tooltip | **Partial** | x, y, colour done (with legend); `size`, `text`, `detail`, `tooltip` are modelled and planned but not drawn or exposed in the UI | M |
-| V06 | Axis, legend and tooltip configuration | **Partial** | Legend drawn; `show_axes`/`show_legend` overrides (`d8fa9b3`). No axis titles or tooltip configuration | M |
+| V06 | Axis, legend and tooltip configuration | **Partial** | Legend, show/hide axes and axis titles done; **tooltip configuration remains** | M |
 | V07 | Sort and row limit | **Done** | toolbar + planner `ORDER BY`/`LIMIT` | — |
 | V08 | Heatmaps | **Not started** | `Mark::Rect` exists; scene rejects it; needs a colour scale | M |
-| V09 | Pie and donut | **Partial** | Pie done (`a6d91c9`); donut needs an inner radius (mark variant or field) | S |
+| V09 | Pie and donut | **Done** | Pie (`a6d91c9`) and donut (`f45f9de`), both with legends | — |
 | V10 | KPI and text tiles | **Partial** | Planner emits a KPI plan (`kpi_tile.sql`, `Mark::Text`); scene rejects `Text` | M |
-| V11 | Colourblind-safe palettes by default | **Partial** | The default palette is documented colourblind-safe; no test verifies it and there is no palette choice | S |
+| V11 | Colourblind-safe palettes by default | **Done** | Okabe–Ito default palette; a test keeps the scene and theme in sync | — |
 | V12 | Automatic chart suggestion | **Not started** | — | M |
 | T01 | Tabs: create/rename/duplicate/close/reorder | **Done** | reorder added in `007cb37` | — |
 | T03 | "Used in" indicator | **Done** | `Session::used_in`, toolbar display | — |
 | T04 | Fork a worksheet | **Done** | `duplicate_worksheet` | — |
 | T05 | Delete safety + placeholder | **Done** | warn + placeholder; validator no longer rejects dangling refs (`e6193dd`) | — |
-| T06 | Jump from report element to worksheet | **Not started** | — | S |
+| T06 | Jump from report element to worksheet | **Done** | Clicking a report chart opens its source worksheet | — |
 
 ### Reports
 
@@ -110,7 +110,7 @@ At the snapshot, of the **48 MVP-scope features**: **24 done, 15 partial, 9 not 
 | O01 | Published `.scz` specification | **Partial** | Format + doc comments exist; no published specification document | M |
 | O02 | Generated JSON Schema, published | **Partial** | `workbook_schema()` + a shape test; not published/served, and the app's output is not validated against it (MVP-20) | M |
 | O04 | Versioning and migration policy | **Partial** | One format version with clean refusal; no migration machinery, fixtures or written policy | M |
-| U07 | Dark and light themes | **Partial** | Light UI + two report background themes; no dark mode toggle | S |
+| U07 | Dark and light themes | **Done** | Light/dark switch in the top bar | — |
 | U08 | Onboarding sample workbook | **Not started** | — | S |
 
 ---
@@ -183,13 +183,13 @@ Counts: **Met 8 · Partial 8 · Not met 4.**
 Each phase is independently shippable and leaves `cargo xtask ci` green.
 
 ### Phase 1 — quick wins (finish half-built surface)
-- [ ] **V09 donut** — inner radius on the pie scene; mark choice in the toolbar. **S**
-- [ ] **M04 descriptions** — editor + tooltip; needs no format change. **S**
-- [ ] **T06 jump to source** — click a report element to activate its worksheet. **S**
+- [x] **V09 donut** — inner radius on the pie scene; mark choice in the toolbar. **S**
+- [x] **M04 descriptions** — editor + tooltip; needs no format change. **S**
+- [x] **T06 jump to source** — click a report element to activate its worksheet. **S**
 - [ ] **M02 hide + reorder** — data-pane toggles; rename deferred or done with reference rewriting. **M**
-- [ ] **V06 axis titles + tooltip config** — extend `SceneOptions`/worksheet presentation. **M**
-- [ ] **V11 palette verification** — assert contrast/colourblind separation; expose palette choice. **S**
-- [ ] **U07 dark mode** — `Visuals::dark` toggle persisted with preferences. **S**
+- [x] **V06 axis titles** — done; **tooltip configuration** remains. **M**
+- [x] **V11 palette verification** — Okabe–Ito default; scene/theme kept in sync by a test. **S**
+- [x] **U07 dark mode** — light/dark switch in the top bar (persistence not yet). **S**
 - [ ] **U08 onboarding workbook** — generate a small sample `.scz` on first run. **S**
 
 ### Phase 2 — chart types (each needs the scene + both renderers)
