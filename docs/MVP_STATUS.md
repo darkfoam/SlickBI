@@ -155,7 +155,7 @@ Counts: **Met 12 · Partial 6 · Not met 2.**
 | Cold start < 2 s | Not measured |
 | Chart render < 300 ms at 1M rows | `engine/tests/perf.rs` exists but is `#[ignore]` and asserts < 2 s, not the 300 ms budget; not in the CI gate |
 | Report re-render < 500 ms | Not measured |
-| Filter/cross-filter < 500 ms p95 | Not measured (cross-filter absent) |
+| Filter/cross-filter < 500 ms p95 | Not measured (cross-filter implemented) |
 | No reachable panics; typed errors | Largely met in core crates; not audited |
 | Memory < 1 GB at 1M rows | Not measured |
 | Binary < 120 MB | Not measured |
@@ -247,6 +247,6 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [ ] No ignored tests, warnings, or TODOs without IDs
 - [ ] Tag `0.0.3` on `main`, merged back to `dev`
 
-The largest risks to the MVP are the remaining V12/R06/U08 scope and the acceptance-hardening work. The
-cheapest large wins are Phase 1 (finish visible, half-built surface) and Phase 6 (acceptance
-hardening: CSV parity, schema validation, report render parity, soak gate).
+The remaining risk is acceptance and quality hardening, not feature scope. The largest gaps are
+render parity between egui and tiny-skia, the ≥20-workbook fixture corpus, the 1M-row performance
+gate, and the three-platform ship checklist.
