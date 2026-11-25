@@ -222,6 +222,22 @@ impl Session {
         self.refresh();
     }
 
+    /// Moves a worksheet earlier or later among the tabs, keeping it active.
+    pub fn move_worksheet(&mut self, index: usize, delta: isize) {
+        let last = self.workbook.worksheets.len().saturating_sub(1) as isize;
+        let target = (index as isize + delta).clamp(0, last) as usize;
+        if target == index || index >= self.workbook.worksheets.len() {
+            return;
+        }
+        self.workbook.worksheets.swap(index, target);
+        if self.active == index {
+            self.active = target;
+        } else if self.active == target {
+            self.active = index;
+        }
+        self.refresh();
+    }
+
     /// The reports that reference a worksheet, by name.
     pub fn used_in(&self, worksheet: &WorksheetId) -> Vec<String> {
         self.workbook
@@ -1265,6 +1281,25 @@ mod tests {
         assert_eq!(worksheets[1].encoding.y, worksheets[0].encoding.y);
         assert_eq!(session.active(), 1);
         assert!(session.scene().is_some());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn worksheets_can_be_reordered() {
+        let (mut session, path) = loaded();
+        session.add_worksheet();
+        let first = session.workbook().worksheets[0].id.clone();
+        let second = session.workbook().worksheets[1].id.clone();
+
+        session.set_active(0);
+        session.move_worksheet(0, 1);
+        assert_eq!(session.workbook().worksheets[0].id, second);
+        assert_eq!(session.workbook().worksheets[1].id, first);
+        assert_eq!(session.active(), 1, "the moved worksheet stays active");
+
+        // Moving by zero, or past either end, is a no-op.
+        session.move_worksheet(0, 0);
+        assert_eq!(session.workbook().worksheets[0].id, second);
         std::fs::remove_file(&path).ok();
     }
 

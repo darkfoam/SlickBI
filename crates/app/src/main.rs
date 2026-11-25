@@ -45,6 +45,7 @@ enum TabAction {
     CancelRename,
     Duplicate(usize),
     Close(usize),
+    Move(usize, isize),
     Add,
 }
 
@@ -244,6 +245,14 @@ impl SlickBiApp {
                         action = Some(TabAction::Duplicate(index));
                         ui.close();
                     }
+                    if ui.button("Move left").clicked() {
+                        action = Some(TabAction::Move(index, -1));
+                        ui.close();
+                    }
+                    if ui.button("Move right").clicked() {
+                        action = Some(TabAction::Move(index, 1));
+                        ui.close();
+                    }
                     if ui.button("Close").clicked() {
                         action = Some(TabAction::Close(index));
                         ui.close();
@@ -291,6 +300,7 @@ impl SlickBiApp {
             }
             TabAction::CancelRename => self.renaming = None,
             TabAction::Duplicate(index) => self.session.duplicate_worksheet(index),
+            TabAction::Move(index, delta) => self.session.move_worksheet(index, delta),
             TabAction::Close(index) => {
                 let Some(worksheet) = self
                     .session

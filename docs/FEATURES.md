@@ -94,7 +94,7 @@ that needs different data is a forked worksheet.
 | V20 | Annotations on marks | F | 0.3.0 | planned |
 | V21 | Choropleth maps | F | 0.4.0 | planned |
 | V22 | Tile and point maps | F | 0.4.0 | planned |
-| T01 | Worksheet tabs: create, rename, duplicate, close, reorder | F | 0.0.2 | in progress |
+| T01 | Worksheet tabs: create, rename, duplicate, close, reorder | F | 0.0.2 | done |
 | T02 | Worksheet navigator: search, jump, thumbnails | F | 0.2.0 | planned |
 | T03 | "Used in" indicator: which reports reference this worksheet | F | 0.0.3 | done |
 | T04 | Fork a worksheet into an independent copy | F | 0.0.2 | done |
