@@ -1,0 +1,2066 @@
+{
+  "$defs": {
+    "Agg": {
+      "description": "How values are aggregated before being drawn.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "No aggregation; the value is used as it arrives.",
+          "type": "string"
+        },
+        {
+          "const": "sum",
+          "description": "Arithmetic sum.",
+          "type": "string"
+        },
+        {
+          "const": "average",
+          "description": "Arithmetic mean.",
+          "type": "string"
+        },
+        {
+          "const": "median",
+          "description": "Median.",
+          "type": "string"
+        },
+        {
+          "const": "min",
+          "description": "Smallest value.",
+          "type": "string"
+        },
+        {
+          "const": "max",
+          "description": "Largest value.",
+          "type": "string"
+        },
+        {
+          "const": "count",
+          "description": "Row count.",
+          "type": "string"
+        },
+        {
+          "const": "count_distinct",
+          "description": "Count of distinct values.",
+          "type": "string"
+        },
+        {
+          "const": "std_dev",
+          "description": "Sample standard deviation.",
+          "type": "string"
+        },
+        {
+          "const": "variance",
+          "description": "Sample variance.",
+          "type": "string"
+        },
+        {
+          "const": "first",
+          "description": "First value in the current ordering.",
+          "type": "string"
+        },
+        {
+          "const": "last",
+          "description": "Last value in the current ordering.",
+          "type": "string"
+        }
+      ]
+    },
+    "AggSpec": {
+      "additionalProperties": false,
+      "description": "One aggregate in an explicit aggregation step.",
+      "properties": {
+        "agg": {
+          "$ref": "#/$defs/Agg",
+          "description": "How to aggregate it."
+        },
+        "alias": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "An optional new name for the result."
+        },
+        "field": {
+          "$ref": "#/$defs/FieldId",
+          "description": "The field to aggregate."
+        }
+      },
+      "required": [
+        "field",
+        "agg"
+      ],
+      "type": "object"
+    },
+    "Canvas": {
+      "additionalProperties": false,
+      "description": "The drawing surface of a screen report, in points.",
+      "properties": {
+        "height": {
+          "description": "Height in points.",
+          "format": "double",
+          "type": "number"
+        },
+        "width": {
+          "description": "Width in points.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "Cardinality": {
+      "description": "The cardinality of a relationship.",
+      "oneOf": [
+        {
+          "const": "one_to_one",
+          "description": "Exactly one row on each side.",
+          "type": "string"
+        },
+        {
+          "const": "one_to_many",
+          "description": "One row on the `from` side, many on the `to` side.",
+          "type": "string"
+        },
+        {
+          "const": "many_to_one",
+          "description": "Many rows on the `from` side, one on the `to` side.",
+          "type": "string"
+        },
+        {
+          "const": "many_to_many",
+          "description": "Many rows on both sides.",
+          "type": "string"
+        }
+      ]
+    },
+    "Channel": {
+      "additionalProperties": false,
+      "description": "One field placed on one shelf.",
+      "properties": {
+        "agg": {
+          "$ref": "#/$defs/Agg",
+          "default": "none",
+          "description": "How to aggregate it. Dimensions normally use [`Agg::None`]."
+        },
+        "field": {
+          "$ref": "#/$defs/FieldId",
+          "description": "The field to read."
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScaleId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The scale to use, when the worksheet defines several."
+        },
+        "title": {
+          "description": "A title that overrides the field name for this worksheet.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "type": "object"
+    },
+    "ChartElement": {
+      "additionalProperties": false,
+      "description": "A worksheet placed in a report.",
+      "properties": {
+        "overrides": {
+          "$ref": "#/$defs/Overrides",
+          "default": {},
+          "description": "Appearance overrides."
+        },
+        "title": {
+          "description": "A title for this placement, overriding the worksheet name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "worksheet": {
+          "$ref": "#/$defs/WorksheetId",
+          "description": "The worksheet this element displays. The values come from here, live."
+        }
+      },
+      "required": [
+        "worksheet"
+      ],
+      "type": "object"
+    },
+    "Column": {
+      "additionalProperties": false,
+      "description": "A column as the source presents it.",
+      "properties": {
+        "data_type": {
+          "$ref": "#/$defs/DataType",
+          "description": "The classified type."
+        },
+        "id": {
+          "$ref": "#/$defs/ColumnId",
+          "description": "Identifier of this column, unique within its table."
+        },
+        "name": {
+          "description": "The name as the source presents it.",
+          "type": "string"
+        },
+        "nullable": {
+          "default": false,
+          "description": "Whether the source permits nulls.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "data_type"
+      ],
+      "type": "object"
+    },
+    "ColumnId": {
+      "description": "Identifies a column inside a table.",
+      "type": "string"
+    },
+    "Connection": {
+      "additionalProperties": false,
+      "description": "A connection to a data source.\n\nA connection never carries a secret. File paths and host names are stored so the workbook can\nreopen its sources; passwords and keys live in the operating system keychain, or in the hosted\ncredential vault for Pro accounts, and are referenced out of band.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ConnectionId",
+          "description": "Identifier of this connection."
+        },
+        "kind": {
+          "$ref": "#/$defs/ConnectionKind",
+          "description": "The kind of source."
+        },
+        "location": {
+          "description": "A path or a host-and-database descriptor. Never a secret.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Human-readable name shown in the data pane.",
+          "type": "string"
+        },
+        "options": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Source-specific settings, such as a sheet name or a schema.",
+          "type": "object"
+        },
+        "read_only": {
+          "default": false,
+          "description": "Whether the user asked for this connection to be read-only.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "location"
+      ],
+      "type": "object"
+    },
+    "ConnectionId": {
+      "description": "Identifies a connection to a data source.",
+      "type": "string"
+    },
+    "ConnectionKind": {
+      "description": "The kinds of source the application can read.",
+      "oneOf": [
+        {
+          "const": "csv",
+          "description": "A delimited text file.",
+          "type": "string"
+        },
+        {
+          "const": "excel",
+          "description": "An Excel workbook.",
+          "type": "string"
+        },
+        {
+          "const": "parquet",
+          "description": "A Parquet file.",
+          "type": "string"
+        },
+        {
+          "const": "json",
+          "description": "A JSON or newline-delimited JSON file.",
+          "type": "string"
+        },
+        {
+          "const": "sqlite",
+          "description": "A SQLite database file.",
+          "type": "string"
+        },
+        {
+          "const": "postgres",
+          "description": "A PostgreSQL server.",
+          "type": "string"
+        },
+        {
+          "const": "my_sql",
+          "description": "A MySQL or MariaDB server.",
+          "type": "string"
+        }
+      ]
+    },
+    "CrossFilter": {
+      "description": "Which direction filters propagate across a relationship.",
+      "oneOf": [
+        {
+          "const": "single",
+          "description": "Filters flow from `from` to `to` only.",
+          "type": "string"
+        },
+        {
+          "const": "both",
+          "description": "Filters flow in both directions.",
+          "type": "string"
+        }
+      ]
+    },
+    "DataModel": {
+      "additionalProperties": false,
+      "description": "A semantic model: the tables, fields and relationships a workbook analyses.",
+      "properties": {
+        "fields": {
+          "description": "The fields exposed to worksheets.",
+          "items": {
+            "$ref": "#/$defs/Field"
+          },
+          "type": "array"
+        },
+        "id": {
+          "$ref": "#/$defs/DataModelId",
+          "description": "Identifier of this model."
+        },
+        "name": {
+          "description": "Human-readable name.",
+          "type": "string"
+        },
+        "relationships": {
+          "description": "Relationships between tables, used from 0.2.0.",
+          "items": {
+            "$ref": "#/$defs/Relationship"
+          },
+          "type": "array"
+        },
+        "tables": {
+          "description": "The tables this model draws from.",
+          "items": {
+            "$ref": "#/$defs/Table"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "tables",
+        "fields"
+      ],
+      "type": "object"
+    },
+    "DataModelId": {
+      "description": "Identifies a semantic model.",
+      "type": "string"
+    },
+    "DataType": {
+      "description": "The type of a value as understood by the application.\n\nThis is intentionally a small set. Types that a source reports but the application cannot use\nare mapped to [`DataType::Unknown`] rather than rejected, so that a model can be partially\nbuilt from an unfamiliar source.",
+      "oneOf": [
+        {
+          "const": "integer",
+          "description": "A whole number.",
+          "type": "string"
+        },
+        {
+          "const": "number",
+          "description": "A number with a fractional part.",
+          "type": "string"
+        },
+        {
+          "const": "text",
+          "description": "Text of arbitrary length.",
+          "type": "string"
+        },
+        {
+          "const": "boolean",
+          "description": "A boolean.",
+          "type": "string"
+        },
+        {
+          "const": "date",
+          "description": "A calendar date without a time.",
+          "type": "string"
+        },
+        {
+          "const": "timestamp",
+          "description": "A date with a time and, usually, a time zone.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "A type the application could not classify.",
+          "type": "string"
+        }
+      ]
+    },
+    "Element": {
+      "additionalProperties": false,
+      "description": "One positioned item in a report.",
+      "properties": {
+        "frame": {
+          "$ref": "#/$defs/Rect",
+          "description": "Where it sits and how large it is."
+        },
+        "id": {
+          "$ref": "#/$defs/ElementId",
+          "description": "Identifier, unique within the report."
+        },
+        "kind": {
+          "$ref": "#/$defs/ElementKind",
+          "description": "What it draws."
+        }
+      },
+      "required": [
+        "id",
+        "frame",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "ElementId": {
+      "description": "Identifies an element inside a report.",
+      "type": "string"
+    },
+    "ElementKind": {
+      "description": "What an element draws.",
+      "oneOf": [
+        {
+          "description": "A chart, referenced from a worksheet.",
+          "properties": {
+            "chart": {
+              "$ref": "#/$defs/ChartElement",
+              "description": "The chart placement."
+            },
+            "kind": {
+              "const": "chart",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "chart"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A block of text.",
+          "properties": {
+            "kind": {
+              "const": "text",
+              "type": "string"
+            },
+            "text": {
+              "$ref": "#/$defs/TextElement",
+              "description": "The text."
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Encoding": {
+      "additionalProperties": false,
+      "description": "The shelves of a worksheet.\n\nAny non-aggregated channel becomes part of the grouping. The planner derives the `GROUP BY`\nfrom this structure rather than from a hand-written list, so the chart and the query cannot\ndisagree.",
+      "properties": {
+        "color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Channel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Colour."
+        },
+        "detail": {
+          "description": "Fields that split marks without encoding a visual property.",
+          "items": {
+            "$ref": "#/$defs/Channel"
+          },
+          "type": "array"
+        },
+        "opacity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Channel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Opacity."
+        },
+        "shape": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Channel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Shape, for point marks."
+        },
+        "size": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Channel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Size."
+        },
+        "text": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Channel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The text of a label or a KPI tile."
+        },
+        "tooltip": {
+          "description": "Fields shown in the tooltip.",
+          "items": {
+            "$ref": "#/$defs/Channel"
+          },
+          "type": "array"
+        },
+        "x": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Channel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The horizontal shelf."
+        },
+        "x2": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Channel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The end of a horizontal range, for bars and areas."
+        },
+        "y": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Channel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The vertical shelf."
+        },
+        "y2": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Channel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The end of a vertical range."
+        }
+      },
+      "type": "object"
+    },
+    "Field": {
+      "additionalProperties": false,
+      "description": "A field exposed to worksheets: a column, or a calculation over columns.",
+      "properties": {
+        "data_type": {
+          "$ref": "#/$defs/DataType",
+          "description": "The classified type."
+        },
+        "description": {
+          "description": "A short explanation, shown in tooltips and offered to external agents through MCP.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FieldFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How values are displayed."
+        },
+        "hidden": {
+          "default": false,
+          "description": "Whether the field is hidden from the data pane.",
+          "type": "boolean"
+        },
+        "id": {
+          "$ref": "#/$defs/FieldId",
+          "description": "Identifier of this field."
+        },
+        "name": {
+          "description": "The name shown to the user; may differ from the column name.",
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/Role",
+          "description": "Whether the field groups or aggregates."
+        },
+        "source": {
+          "$ref": "#/$defs/FieldSource",
+          "description": "Where the values come from."
+        },
+        "table": {
+          "$ref": "#/$defs/TableId",
+          "description": "The table this field belongs to."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "table",
+        "source",
+        "role",
+        "data_type"
+      ],
+      "type": "object"
+    },
+    "FieldFormat": {
+      "description": "How a field's values are rendered.",
+      "oneOf": [
+        {
+          "description": "A numeric format.",
+          "properties": {
+            "currency": {
+              "description": "An ISO 4217 code, or a symbol, when the value is money.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "decimals": {
+              "description": "Digits after the decimal point.",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "number",
+              "type": "string"
+            },
+            "thousands": {
+              "description": "Whether to group thousands.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "decimals",
+            "thousands"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A date or timestamp format, using the application's pattern syntax.",
+          "properties": {
+            "kind": {
+              "const": "date",
+              "type": "string"
+            },
+            "pattern": {
+              "description": "The pattern.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "pattern"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A text format.",
+          "properties": {
+            "kind": {
+              "const": "text",
+              "type": "string"
+            },
+            "max_chars": {
+              "description": "Truncate display at this many characters, when set.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "FieldId": {
+      "description": "Identifies a field exposed by a model, which may be a column or a calculation.",
+      "type": "string"
+    },
+    "FieldSource": {
+      "description": "Where a field's values come from.",
+      "oneOf": [
+        {
+          "description": "A straight reference to a column.",
+          "properties": {
+            "column": {
+              "$ref": "#/$defs/ColumnId",
+              "description": "The column this field exposes."
+            },
+            "kind": {
+              "const": "column",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "column"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A calculated expression, owned by the calculation language.",
+          "properties": {
+            "expression": {
+              "description": "The expression source, parsed and typed by the calculation crate.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "expression",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "expression"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Filter": {
+      "additionalProperties": false,
+      "description": "A predicate applied to a worksheet before aggregation.",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/FieldId",
+          "description": "The field to test."
+        },
+        "op": {
+          "$ref": "#/$defs/FilterOp",
+          "description": "How to test it."
+        },
+        "values": {
+          "description": "The comparison values. Interpretation depends on [`FilterOp`]: none for null tests, one\nfor comparison, two for `between`, many for `in` and `not_in`.",
+          "items": {
+            "$ref": "#/$defs/Scalar"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "field",
+        "op"
+      ],
+      "type": "object"
+    },
+    "FilterOp": {
+      "description": "How a filter compares a field to its values.",
+      "oneOf": [
+        {
+          "const": "equal",
+          "description": "Equal to the single value.",
+          "type": "string"
+        },
+        {
+          "const": "not_equal",
+          "description": "Not equal to the single value.",
+          "type": "string"
+        },
+        {
+          "const": "less",
+          "description": "Less than the single value.",
+          "type": "string"
+        },
+        {
+          "const": "less_or_equal",
+          "description": "Less than or equal to the single value.",
+          "type": "string"
+        },
+        {
+          "const": "greater",
+          "description": "Greater than the single value.",
+          "type": "string"
+        },
+        {
+          "const": "greater_or_equal",
+          "description": "Greater than or equal to the single value.",
+          "type": "string"
+        },
+        {
+          "const": "in",
+          "description": "One of the listed values.",
+          "type": "string"
+        },
+        {
+          "const": "not_in",
+          "description": "None of the listed values.",
+          "type": "string"
+        },
+        {
+          "const": "between",
+          "description": "Between the first and second values, inclusive.",
+          "type": "string"
+        },
+        {
+          "const": "contains",
+          "description": "Contains the text.",
+          "type": "string"
+        },
+        {
+          "const": "starts_with",
+          "description": "Starts with the text.",
+          "type": "string"
+        },
+        {
+          "const": "ends_with",
+          "description": "Ends with the text.",
+          "type": "string"
+        },
+        {
+          "const": "is_null",
+          "description": "Is null. Takes no values.",
+          "type": "string"
+        },
+        {
+          "const": "is_not_null",
+          "description": "Is not null. Takes no values.",
+          "type": "string"
+        }
+      ]
+    },
+    "KeyRef": {
+      "additionalProperties": false,
+      "description": "One end of a relationship.",
+      "properties": {
+        "columns": {
+          "description": "The columns forming the key.",
+          "items": {
+            "$ref": "#/$defs/ColumnId"
+          },
+          "type": "array"
+        },
+        "table": {
+          "$ref": "#/$defs/TableId",
+          "description": "The table."
+        }
+      },
+      "required": [
+        "table",
+        "columns"
+      ],
+      "type": "object"
+    },
+    "Margins": {
+      "additionalProperties": false,
+      "description": "Page margins in points.",
+      "properties": {
+        "bottom": {
+          "description": "Bottom margin.",
+          "format": "double",
+          "type": "number"
+        },
+        "left": {
+          "description": "Left margin.",
+          "format": "double",
+          "type": "number"
+        },
+        "right": {
+          "description": "Right margin.",
+          "format": "double",
+          "type": "number"
+        },
+        "top": {
+          "description": "Top margin.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "top",
+        "right",
+        "bottom",
+        "left"
+      ],
+      "type": "object"
+    },
+    "Mark": {
+      "description": "The shape drawn for each group of values.",
+      "oneOf": [
+        {
+          "const": "bar",
+          "description": "A bar or column.",
+          "type": "string"
+        },
+        {
+          "const": "line",
+          "description": "A line.",
+          "type": "string"
+        },
+        {
+          "const": "area",
+          "description": "A filled area.",
+          "type": "string"
+        },
+        {
+          "const": "point",
+          "description": "A point.",
+          "type": "string"
+        },
+        {
+          "const": "rect",
+          "description": "A rectangle, including heatmap cells.",
+          "type": "string"
+        },
+        {
+          "const": "text",
+          "description": "Text, including KPI tiles.",
+          "type": "string"
+        },
+        {
+          "const": "arc",
+          "description": "An arc, used by pie and donut charts.",
+          "type": "string"
+        },
+        {
+          "const": "donut",
+          "description": "A donut: an arc with a hole in the middle.",
+          "type": "string"
+        },
+        {
+          "const": "rule",
+          "description": "A horizontal or vertical rule.",
+          "type": "string"
+        }
+      ]
+    },
+    "Orientation": {
+      "description": "Which way a print page faces.",
+      "oneOf": [
+        {
+          "const": "portrait",
+          "description": "Taller than wide.",
+          "type": "string"
+        },
+        {
+          "const": "landscape",
+          "description": "Wider than tall.",
+          "type": "string"
+        }
+      ]
+    },
+    "Overrides": {
+      "additionalProperties": false,
+      "description": "Presentation overrides applied to one chart in one report.\n\nEvery field is optional and only ever affects appearance. Anything that changes the numbers\nbelongs to the worksheet, not here.",
+      "properties": {
+        "background": {
+          "description": "A background colour, as a CSS colour string.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "border": {
+          "description": "Whether to draw a border around the element.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "padding": {
+          "description": "Inner padding in points.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "show_axes": {
+          "description": "Whether to draw the axes.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "show_legend": {
+          "description": "Whether to draw the legend.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "show_title": {
+          "description": "Whether to draw the chart title.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PageSetup": {
+      "additionalProperties": false,
+      "description": "Everything needed to lay a report out on paper.",
+      "properties": {
+        "margins": {
+          "$ref": "#/$defs/Margins",
+          "description": "The margins."
+        },
+        "orientation": {
+          "$ref": "#/$defs/Orientation",
+          "default": "portrait",
+          "description": "The orientation."
+        },
+        "size": {
+          "$ref": "#/$defs/PageSize",
+          "description": "The paper."
+        }
+      },
+      "required": [
+        "size",
+        "margins"
+      ],
+      "type": "object"
+    },
+    "PageSize": {
+      "description": "The paper size of a print report.",
+      "oneOf": [
+        {
+          "description": "ISO A4.",
+          "properties": {
+            "kind": {
+              "const": "a4",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "US Letter.",
+          "properties": {
+            "kind": {
+              "const": "letter",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "US Legal.",
+          "properties": {
+            "kind": {
+              "const": "legal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A custom size in points.",
+          "properties": {
+            "height": {
+              "description": "Height in points.",
+              "format": "double",
+              "type": "number"
+            },
+            "kind": {
+              "const": "custom",
+              "type": "string"
+            },
+            "width": {
+              "description": "Width in points.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "width",
+            "height"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Rect": {
+      "additionalProperties": false,
+      "description": "A rectangle in points, with the origin at the top left.",
+      "properties": {
+        "height": {
+          "description": "Height.",
+          "format": "double",
+          "type": "number"
+        },
+        "width": {
+          "description": "Width.",
+          "format": "double",
+          "type": "number"
+        },
+        "x": {
+          "description": "Distance from the left edge.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "Distance from the top edge.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "Relationship": {
+      "additionalProperties": false,
+      "description": "A relationship between two tables.",
+      "properties": {
+        "cardinality": {
+          "$ref": "#/$defs/Cardinality",
+          "description": "How rows on each side correspond."
+        },
+        "cross_filter": {
+          "$ref": "#/$defs/CrossFilter",
+          "default": "single",
+          "description": "Which direction filters propagate."
+        },
+        "from": {
+          "$ref": "#/$defs/KeyRef",
+          "description": "The originating key."
+        },
+        "id": {
+          "$ref": "#/$defs/RelationshipId",
+          "description": "Identifier of this relationship."
+        },
+        "to": {
+          "$ref": "#/$defs/KeyRef",
+          "description": "The target key."
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "to",
+        "cardinality"
+      ],
+      "type": "object"
+    },
+    "RelationshipId": {
+      "description": "Identifies a relationship between two tables.",
+      "type": "string"
+    },
+    "Report": {
+      "additionalProperties": false,
+      "description": "A composed document built from worksheets.",
+      "properties": {
+        "canvas": {
+          "$ref": "#/$defs/Canvas",
+          "description": "The drawing surface for screen reports."
+        },
+        "elements": {
+          "description": "The elements, in draw order.",
+          "items": {
+            "$ref": "#/$defs/Element"
+          },
+          "type": "array"
+        },
+        "id": {
+          "$ref": "#/$defs/ReportId",
+          "description": "Identifier."
+        },
+        "name": {
+          "description": "Name shown in the report list and as the document title.",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/ReportTarget",
+          "description": "Whether this is a screen or print document."
+        },
+        "theme": {
+          "description": "The theme name, resolved against the workbook theme.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "target",
+        "canvas",
+        "elements"
+      ],
+      "type": "object"
+    },
+    "ReportId": {
+      "description": "Identifies a report, which composes worksheets into a document.",
+      "type": "string"
+    },
+    "ReportTarget": {
+      "description": "What a report is designed for.",
+      "oneOf": [
+        {
+          "description": "A screen document that scales to the window.",
+          "properties": {
+            "kind": {
+              "const": "screen",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A paginated document intended for paper or PDF.",
+          "properties": {
+            "kind": {
+              "const": "print",
+              "type": "string"
+            },
+            "page": {
+              "$ref": "#/$defs/PageSetup",
+              "description": "The page layout."
+            }
+          },
+          "required": [
+            "kind",
+            "page"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Role": {
+      "description": "How a field participates in analysis.",
+      "oneOf": [
+        {
+          "const": "dimension",
+          "description": "A field used to group, filter or label: something you slice by.",
+          "type": "string"
+        },
+        {
+          "const": "measure",
+          "description": "A field used in aggregation: something you measure.",
+          "type": "string"
+        }
+      ]
+    },
+    "Scalar": {
+      "anyOf": [
+        {
+          "description": "A boolean.",
+          "type": "boolean"
+        },
+        {
+          "description": "A whole number.",
+          "format": "int64",
+          "type": "integer"
+        },
+        {
+          "description": "A number with a fraction.",
+          "format": "double",
+          "type": "number"
+        },
+        {
+          "description": "Text.",
+          "type": "string"
+        }
+      ],
+      "description": "A literal value used by a filter or a parameter."
+    },
+    "ScaleId": {
+      "description": "Identifies a scale configuration.",
+      "type": "string"
+    },
+    "ScaleKind": {
+      "description": "How a numeric or temporal axis is mapped.",
+      "oneOf": [
+        {
+          "const": "linear",
+          "description": "Continuous linear.",
+          "type": "string"
+        },
+        {
+          "const": "logarithmic",
+          "description": "Continuous logarithmic.",
+          "type": "string"
+        },
+        {
+          "const": "time",
+          "description": "Continuous time.",
+          "type": "string"
+        },
+        {
+          "const": "band",
+          "description": "Discrete with a band per category.",
+          "type": "string"
+        },
+        {
+          "const": "point",
+          "description": "Discrete with a point per category.",
+          "type": "string"
+        },
+        {
+          "const": "ordinal",
+          "description": "Discrete with no implied order.",
+          "type": "string"
+        }
+      ]
+    },
+    "ScaleSpec": {
+      "additionalProperties": false,
+      "description": "Configuration for one scale.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ScaleId",
+          "description": "Identifier referenced by channels."
+        },
+        "kind": {
+          "$ref": "#/$defs/ScaleKind",
+          "description": "The mapping."
+        },
+        "nice": {
+          "default": true,
+          "description": "Whether to extend the domain to round numbers.",
+          "type": "boolean"
+        },
+        "palette": {
+          "description": "A palette name, for colour scales.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "SortKey": {
+      "additionalProperties": false,
+      "description": "One key in a sort.",
+      "properties": {
+        "agg": {
+          "$ref": "#/$defs/Agg",
+          "default": "none",
+          "description": "The aggregation to apply first, when sorting an aggregated result."
+        },
+        "descending": {
+          "default": false,
+          "description": "Whether the order is descending.",
+          "type": "boolean"
+        },
+        "field": {
+          "$ref": "#/$defs/FieldId",
+          "description": "The field to sort by."
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "type": "object"
+    },
+    "Table": {
+      "additionalProperties": false,
+      "description": "A physical table or file.",
+      "properties": {
+        "columns": {
+          "description": "The columns it exposes.",
+          "items": {
+            "$ref": "#/$defs/Column"
+          },
+          "type": "array"
+        },
+        "id": {
+          "$ref": "#/$defs/TableId",
+          "description": "Identifier of this table."
+        },
+        "name": {
+          "description": "The name as the source presents it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "columns"
+      ],
+      "type": "object"
+    },
+    "TableId": {
+      "description": "Identifies a table inside a model.",
+      "type": "string"
+    },
+    "TextAlign": {
+      "description": "How text is aligned inside its frame.",
+      "oneOf": [
+        {
+          "const": "left",
+          "description": "Flush left.",
+          "type": "string"
+        },
+        {
+          "const": "center",
+          "description": "Centred.",
+          "type": "string"
+        },
+        {
+          "const": "right",
+          "description": "Flush right.",
+          "type": "string"
+        }
+      ]
+    },
+    "TextElement": {
+      "additionalProperties": false,
+      "description": "A block of prose.",
+      "properties": {
+        "align": {
+          "$ref": "#/$defs/TextAlign",
+          "default": "left",
+          "description": "Alignment."
+        },
+        "markdown": {
+          "description": "Markdown source.",
+          "type": "string"
+        },
+        "style": {
+          "description": "A named text style from the report theme.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "markdown"
+      ],
+      "type": "object"
+    },
+    "Theme": {
+      "additionalProperties": false,
+      "description": "Colours and typography used when a worksheet or report does not override them.",
+      "properties": {
+        "background": {
+          "description": "The page or canvas background.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "font_family": {
+          "description": "The font family for body text and axes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "foreground": {
+          "description": "The default text colour.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The theme name.",
+          "type": "string"
+        },
+        "palette": {
+          "description": "Categorical colours, as CSS colour strings, in order of use.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Transform": {
+      "description": "A step applied to the data after it is read and before it is drawn.",
+      "oneOf": [
+        {
+          "description": "Group a numeric field into fixed-width bins.",
+          "properties": {
+            "alias": {
+              "$ref": "#/$defs/FieldId",
+              "description": "The field id the binned values are exposed as."
+            },
+            "field": {
+              "$ref": "#/$defs/FieldId",
+              "description": "The field to bin."
+            },
+            "kind": {
+              "const": "bin",
+              "type": "string"
+            },
+            "size": {
+              "description": "The width of each bin.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "field",
+            "size",
+            "alias"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An explicit aggregation step.",
+          "properties": {
+            "aggregates": {
+              "description": "The aggregates to compute.",
+              "items": {
+                "$ref": "#/$defs/AggSpec"
+              },
+              "type": "array"
+            },
+            "group_by": {
+              "description": "The fields to group by.",
+              "items": {
+                "$ref": "#/$defs/FieldId"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "aggregate",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "group_by",
+            "aggregates"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A calculated expression evaluated over the rows.",
+          "properties": {
+            "alias": {
+              "$ref": "#/$defs/FieldId",
+              "description": "The field id the result is exposed as."
+            },
+            "expression": {
+              "description": "The expression, owned by the calculation language.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "calculate",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "alias",
+            "expression"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A window or table calculation.",
+          "properties": {
+            "alias": {
+              "$ref": "#/$defs/FieldId",
+              "description": "The field id the result is exposed as."
+            },
+            "kind": {
+              "const": "window",
+              "type": "string"
+            },
+            "spec": {
+              "$ref": "#/$defs/WindowSpec",
+              "description": "The window definition."
+            }
+          },
+          "required": [
+            "kind",
+            "alias",
+            "spec"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An ordering.",
+          "properties": {
+            "keys": {
+              "description": "The keys, applied in order.",
+              "items": {
+                "$ref": "#/$defs/SortKey"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "sort",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "keys"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A row limit, applied after sorting.",
+          "properties": {
+            "kind": {
+              "const": "limit",
+              "type": "string"
+            },
+            "rows": {
+              "description": "How many rows to keep.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "rows"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WindowFrame": {
+      "additionalProperties": false,
+      "description": "The frame a window function operates over, expressed as offsets from the current row.",
+      "properties": {
+        "end": {
+          "description": "Offset of the last row, zero for the current row.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/WindowFrameKind",
+          "description": "Whether offsets count rows or values."
+        },
+        "start": {
+          "description": "Offset of the first row, negative for preceding.",
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "start",
+        "end"
+      ],
+      "type": "object"
+    },
+    "WindowFrameKind": {
+      "description": "Which side of a window a frame covers.",
+      "oneOf": [
+        {
+          "const": "rows",
+          "description": "Count rows.",
+          "type": "string"
+        },
+        {
+          "const": "range",
+          "description": "Compare values.",
+          "type": "string"
+        }
+      ]
+    },
+    "WindowFunction": {
+      "description": "The function applied across a window.",
+      "oneOf": [
+        {
+          "const": "row_number",
+          "description": "Position of the row in the partition.",
+          "type": "string"
+        },
+        {
+          "const": "rank",
+          "description": "Rank with gaps.",
+          "type": "string"
+        },
+        {
+          "const": "dense_rank",
+          "description": "Rank without gaps.",
+          "type": "string"
+        },
+        {
+          "const": "sum",
+          "description": "Running sum.",
+          "type": "string"
+        },
+        {
+          "const": "average",
+          "description": "Running mean.",
+          "type": "string"
+        },
+        {
+          "const": "min",
+          "description": "Running minimum.",
+          "type": "string"
+        },
+        {
+          "const": "max",
+          "description": "Running maximum.",
+          "type": "string"
+        },
+        {
+          "const": "count",
+          "description": "Running count.",
+          "type": "string"
+        },
+        {
+          "const": "lag",
+          "description": "The value `n` rows back.",
+          "type": "string"
+        },
+        {
+          "const": "lead",
+          "description": "The value `n` rows forward.",
+          "type": "string"
+        },
+        {
+          "const": "first_value",
+          "description": "The first value in the frame.",
+          "type": "string"
+        },
+        {
+          "const": "last_value",
+          "description": "The last value in the frame.",
+          "type": "string"
+        }
+      ]
+    },
+    "WindowSpec": {
+      "additionalProperties": false,
+      "description": "A window or table calculation.",
+      "properties": {
+        "args": {
+          "description": "Its arguments, when it takes more than the current row's value.",
+          "items": {
+            "$ref": "#/$defs/FieldId"
+          },
+          "type": "array"
+        },
+        "frame": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WindowFrame"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The frame, when the function is frame-sensitive."
+        },
+        "function": {
+          "$ref": "#/$defs/WindowFunction",
+          "description": "The function."
+        },
+        "order": {
+          "description": "The ordering inside each partition.",
+          "items": {
+            "$ref": "#/$defs/SortKey"
+          },
+          "type": "array"
+        },
+        "partition": {
+          "description": "The fields that define each group the window restarts over.",
+          "items": {
+            "$ref": "#/$defs/FieldId"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "function"
+      ],
+      "type": "object"
+    },
+    "WorkbookId": {
+      "description": "Identifies a workbook.",
+      "type": "string"
+    },
+    "WorkbookMeta": {
+      "additionalProperties": false,
+      "description": "Descriptive information about a workbook.",
+      "properties": {
+        "app_version": {
+          "description": "The application version that last wrote the file. Informational only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created": {
+          "description": "When the workbook was created, as an RFC 3339 timestamp. Informational only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "description": "An optional description, shown in the launcher.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modified": {
+          "description": "When the workbook was last saved, as an RFC 3339 timestamp. Informational only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The workbook title.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "Worksheet": {
+      "additionalProperties": false,
+      "description": "One chart, on one tab.",
+      "properties": {
+        "description": {
+          "description": "A note for the author, not shown in reports.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "encoding": {
+          "$ref": "#/$defs/Encoding",
+          "description": "The shelves."
+        },
+        "filters": {
+          "description": "Predicates applied before aggregation.",
+          "items": {
+            "$ref": "#/$defs/Filter"
+          },
+          "type": "array"
+        },
+        "id": {
+          "$ref": "#/$defs/WorksheetId",
+          "description": "Identifier, referenced by report elements."
+        },
+        "limit": {
+          "description": "A row limit applied after sorting.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mark": {
+          "$ref": "#/$defs/Mark",
+          "description": "The mark drawn."
+        },
+        "model": {
+          "$ref": "#/$defs/DataModelId",
+          "description": "The model this worksheet reads."
+        },
+        "name": {
+          "description": "The tab label and the title used in reports unless overridden.",
+          "type": "string"
+        },
+        "scales": {
+          "description": "Scale configurations referenced by channels.",
+          "items": {
+            "$ref": "#/$defs/ScaleSpec"
+          },
+          "type": "array"
+        },
+        "sort": {
+          "description": "The ordering of the result.",
+          "items": {
+            "$ref": "#/$defs/SortKey"
+          },
+          "type": "array"
+        },
+        "transforms": {
+          "description": "Steps applied between reading and drawing.",
+          "items": {
+            "$ref": "#/$defs/Transform"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "model",
+        "mark",
+        "encoding"
+      ],
+      "type": "object"
+    },
+    "WorksheetId": {
+      "description": "Identifies a worksheet, which is one chart on one tab.",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A complete workbook: the single source of truth for everything the application shows.",
+  "properties": {
+    "connections": {
+      "description": "Data sources.",
+      "items": {
+        "$ref": "#/$defs/Connection"
+      },
+      "type": "array"
+    },
+    "format_version": {
+      "description": "The format version this document was written in.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "id": {
+      "$ref": "#/$defs/WorkbookId",
+      "description": "Identifier of the workbook."
+    },
+    "meta": {
+      "$ref": "#/$defs/WorkbookMeta",
+      "description": "Title, description and timestamps."
+    },
+    "models": {
+      "description": "Semantic models.",
+      "items": {
+        "$ref": "#/$defs/DataModel"
+      },
+      "type": "array"
+    },
+    "reports": {
+      "description": "Composed documents.",
+      "items": {
+        "$ref": "#/$defs/Report"
+      },
+      "type": "array"
+    },
+    "theme": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Theme"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The default theme."
+    },
+    "worksheets": {
+      "description": "Charts, one per tab.",
+      "items": {
+        "$ref": "#/$defs/Worksheet"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "format_version",
+    "id",
+    "meta"
+  ],
+  "title": "Workbook",
+  "type": "object"
+}

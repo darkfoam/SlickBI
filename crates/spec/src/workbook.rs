@@ -147,7 +147,7 @@ impl Workbook {
         Ok(serde_json::to_string_pretty(self)?)
     }
 
-    /// Parses a workbook and refuses a format version this build cannot read.
+    /// Parses a workbook, migrates it to the current format version and then reads it.
     ///
     /// The version is read before the rest of the document is deserialised, so that a file
     /// written by a newer build produces a version error rather than a confusing field error.
@@ -160,13 +160,7 @@ impl Workbook {
             .ok_or(FormatError::InvalidVersion)?;
         let found = u32::try_from(found).map_err(|_| FormatError::InvalidVersion)?;
 
-        if found != FORMAT_VERSION {
-            return Err(FormatError::UnsupportedVersion {
-                found,
-                supported: FORMAT_VERSION,
-            });
-        }
-
+        let value = migrate(value, found)?;
         Ok(serde_json::from_value(value)?)
     }
 
@@ -359,6 +353,21 @@ impl Workbook {
 
         Ok(())
     }
+}
+
+/// Migrates a document from `found` to [`FORMAT_VERSION`].
+///
+/// Every future version adds one pure step here and a fixture proving the previous version still
+/// opens with identical semantics (O04). Today the only version is the current one, so this is the
+/// identity, and any other version is refused before a field is read.
+fn migrate(value: serde_json::Value, found: u32) -> Result<serde_json::Value, FormatError> {
+    if found != FORMAT_VERSION {
+        return Err(FormatError::UnsupportedVersion {
+            found,
+            supported: FORMAT_VERSION,
+        });
+    }
+    Ok(value)
 }
 
 fn ensure_ids<'a>(

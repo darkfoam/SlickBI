@@ -21,3 +21,4 @@ slickbi-scene.workspace = true
 slickbi-spec.workspace = true
 slickbi-workbook.workspace = true
 thiserror.workspace = true
+serde_json.workspace = true

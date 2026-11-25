@@ -36,6 +36,20 @@ pub fn validate(path: &Path) -> Result<(), CliError> {
     Scz::open(path).map(|_| ()).map_err(CliError::from)
 }
 
+/// Prints the JSON Schema for a workbook, generated from the document types.
+///
+/// This is the published schema (O01, O02). It cannot drift from the serialiser because both are
+/// produced from the same Rust types.
+///
+/// # Errors
+///
+/// Returns [`CliError::Json`] if the schema cannot be serialised.
+pub fn schema() -> Result<String, CliError> {
+    Ok(serde_json::to_string_pretty(
+        &slickbi_spec::workbook_schema(),
+    )?)
+}
+
 /// Prints the planned SQL for one worksheet, or every worksheet.
 ///
 /// # Errors
@@ -360,6 +374,9 @@ pub enum CliError {
     /// A filesystem operation failed.
     #[error("{0}")]
     Io(#[from] std::io::Error),
+    /// JSON could not be produced or parsed.
+    #[error("{0}")]
+    Json(#[from] serde_json::Error),
     /// No worksheet has that id or name.
     #[error("no worksheet named '{0}'")]
     WorksheetNotFound(String),

@@ -854,6 +854,31 @@ impl Session {
         Ok(())
     }
 
+    /// Writes the active source table to a Parquet file (a local extract).
+    ///
+    /// This is D14: the whole source, independent of any worksheet, as a portable Parquet file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::NoWorksheet`] when no source is loaded, or an engine error if the
+    /// table cannot be written.
+    pub fn export_extract(&mut self, path: &Path) -> Result<(), SessionError> {
+        if self.workbook.models.is_empty() {
+            return Err(SessionError::NoWorksheet);
+        }
+        let sql = format!(
+            "COPY (SELECT * FROM \"{}\") TO ? (FORMAT PARQUET)",
+            slickbi_connectors::TABLE_NAME
+        );
+        self.engine.execute(
+            &sql,
+            &[slickbi_calc::ParamValue::Text(
+                path.to_string_lossy().into_owned(),
+            )],
+        )?;
+        Ok(())
+    }
+
     fn execute_active(
         &mut self,
     ) -> Result<
@@ -1745,6 +1770,17 @@ mod tests {
         assert_eq!(&magic[..4], b"PAR1");
         assert_eq!(&magic[magic.len() - 4..], b"PAR1");
 
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&out).ok();
+    }
+
+    #[test]
+    fn exporting_an_extract_writes_the_source_table() {
+        let (mut session, path) = loaded();
+        let out = temp("extract.parquet");
+        session.export_extract(&out).expect("writes an extract");
+        let bytes = std::fs::read(&out).expect("reads");
+        assert_eq!(&bytes[..4], b"PAR1", "a parquet extract");
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(&out).ok();
     }

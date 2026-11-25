@@ -38,7 +38,7 @@ that needs different data is a forked worksheet.
 | D11 | ClickHouse | F | 0.4.0 | planned |
 | D12 | Microsoft SQL Server | F | 0.4.0 | planned |
 | D13 | HTTP and JSON API sources | F | 0.2.0 | planned |
-| D14 | Local extract to Parquet for any source | F | 0.0.3 | planned |
+| D14 | Local extract to Parquet for any source | F | 0.0.3 | done |
 | D15 | Live query mode against the source | F | 0.0.3 | planned |
 | D16 | Relink a moved or renamed source | F | 0.1.0 | planned |
 | D17 | Refresh source schema and re-read | F | 0.1.0 | planned |
@@ -63,7 +63,7 @@ that needs different data is a forked worksheet.
 | C01 | Arithmetic, comparison, `IF`/`CASE`, text and date functions | F | 0.0.3 | done |
 | C02 | Aggregations, including distinct count and median | F | 0.0.3 | done |
 | C03 | Parameters, usable in calculations and filters | F | 0.0.3 | planned |
-| C04 | Type checking with inline, spanning error messages | F | 0.0.3 | in progress |
+| C04 | Type checking with inline, spanning error messages | F | 0.0.3 | done |
 | C05 | Window and table calculations | F | 0.1.0 | planned |
 | C06 | Level-of-detail expressions | F | 0.1.0 | planned |
 | C07 | Shared calculation library across a workbook | F | 0.2.0 | planned |
@@ -188,10 +188,10 @@ leaving the machine on our behalf.
 
 | ID | Feature | Tier | Release | Status |
 |---|---|---|---|---|
-| O01 | Published `.scz` specification, per format version | F | 0.0.3 | planned |
-| O02 | JSON Schema generated from the implementation and published | F | 0.0.3 | planned |
+| O01 | Published `.scz` specification, per format version | F | 0.0.3 | done |
+| O02 | JSON Schema generated from the implementation and published | F | 0.0.3 | done |
 | O03 | Example workbooks and conformance fixtures | F | 0.1.0 | planned |
-| O04 | Versioning and migration policy | F | 0.0.3 | planned |
+| O04 | Versioning and migration policy | F | 0.0.3 | done |
 | O05 | Format changelog | F | 0.1.0 | planned |
 | O06 | Reference reader: a small sample that opens `.scz` without SlickBI | F | 0.2.0 | planned |
 

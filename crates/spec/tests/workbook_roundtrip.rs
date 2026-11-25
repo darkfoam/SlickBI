@@ -333,3 +333,29 @@ fn the_schema_describes_the_document_it_serialises() {
         );
     }
 }
+
+#[test]
+fn the_schema_validates_the_workbook_it_serialises() {
+    let workbook = sample_workbook();
+    let schema = slickbi_spec::workbook_schema();
+    let validator = jsonschema::validator_for(&schema).expect("the schema compiles");
+    let instance = serde_json::to_value(&workbook).expect("the workbook serialises");
+
+    let errors: Vec<String> = validator
+        .iter_errors(&instance)
+        .map(|error| error.to_string())
+        .collect();
+    assert!(errors.is_empty(), "schema errors: {errors:?}");
+}
+
+#[test]
+fn the_committed_schema_matches_the_generated_one() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/workbook.schema.json"
+    );
+    let committed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("the schema file is committed"))
+            .expect("the schema file is JSON");
+    assert_eq!(committed, slickbi_spec::workbook_schema());
+}

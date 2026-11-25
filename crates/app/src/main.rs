@@ -67,6 +67,7 @@ struct SlickBiApp {
     calc_name: String,
     calc_expr: String,
     calc_error: Option<String>,
+    calc_span: Option<(usize, usize)>,
 
     filter_open: bool,
     filter_field: Option<FieldId>,
@@ -108,6 +109,7 @@ impl SlickBiApp {
             calc_name: String::new(),
             calc_expr: String::new(),
             calc_error: None,
+            calc_span: None,
             filter_open: false,
             filter_field: None,
             filter_op: FilterOp::Equal,
@@ -189,6 +191,16 @@ impl SlickBiApp {
                             && let Err(error) = self.session.export_parquet(&path)
                         {
                             eprintln!("failed to export Parquet: {error}");
+                        }
+                        ui.close();
+                    }
+                    if ui.button("Extract (Parquet)…").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Parquet", &["parquet"])
+                            .save_file()
+                            && let Err(error) = self.session.export_extract(&path)
+                        {
+                            eprintln!("failed to write the extract: {error}");
                         }
                         ui.close();
                     }
@@ -401,6 +413,7 @@ impl SlickBiApp {
         if ui.button("ƒ  New calculation").clicked() {
             self.calc_open = true;
             self.calc_error = None;
+            self.calc_span = None;
         }
     }
 
@@ -1224,11 +1237,53 @@ impl SlickBiApp {
                 ui.text_edit_singleline(&mut self.calc_name);
                 ui.add_space(6.0);
                 ui.label(egui::RichText::new("Expression").small().weak());
+                let error_span = self.calc_span;
+                let mut layouter =
+                    move |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+                        let mut job = egui::text::LayoutJob::default();
+                        job.wrap.max_width = wrap_width;
+                        let source = text.as_str();
+                        let base = egui::TextFormat {
+                            font_id: egui::FontId::monospace(13.0),
+                            color: ui.visuals().text_color(),
+                            ..Default::default()
+                        };
+                        let span = error_span.filter(|(start, end)| {
+                            start <= end
+                                && *end <= source.len()
+                                && source.is_char_boundary(*start)
+                                && source.is_char_boundary(*end)
+                        });
+                        match span {
+                            Some((start, end)) => {
+                                if start > 0 {
+                                    job.append(&source[..start], 0.0, base.clone());
+                                }
+                                job.append(
+                                    &source[start..end],
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: egui::FontId::monospace(13.0),
+                                        color: ui.visuals().text_color(),
+                                        background: egui::Color32::from_rgba_unmultiplied(
+                                            0xB0, 0x30, 0x20, 70,
+                                        ),
+                                        ..Default::default()
+                                    },
+                                );
+                                if end < source.len() {
+                                    job.append(&source[end..], 0.0, base);
+                                }
+                            }
+                            None => job.append(source, 0.0, base),
+                        }
+                        ui.painter().layout_job(job)
+                    };
                 ui.add(
                     egui::TextEdit::multiline(&mut self.calc_expr)
                         .desired_rows(3)
                         .desired_width(f32::INFINITY)
-                        .code_editor(),
+                        .layouter(&mut layouter),
                 );
                 ui.add_space(4.0);
                 ui.label(
@@ -1253,13 +1308,18 @@ impl SlickBiApp {
                                 self.calc_name.clear();
                                 self.calc_expr.clear();
                                 self.calc_error = None;
+                                self.calc_span = None;
                             }
-                            Err(error) => self.calc_error = Some(error.to_string()),
+                            Err(error) => {
+                                self.calc_span = error.span().map(|span| (span.start, span.end));
+                                self.calc_error = Some(error.to_string());
+                            }
                         }
                     }
                     if ui.button("Cancel").clicked() {
                         self.calc_open = false;
                         self.calc_error = None;
+                        self.calc_span = None;
                     }
                 });
             });

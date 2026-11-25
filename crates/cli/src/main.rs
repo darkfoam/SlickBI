@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use slickbi_cli::{
-    OutputFormat, compile, inspect, query, render_preview, render_print, render_svg, validate,
+    OutputFormat, compile, inspect, query, render_preview, render_print, render_svg, schema,
+    validate,
 };
 use slickbi_entitlement::Entitlement;
 
@@ -47,6 +48,7 @@ fn run(args: &[String]) -> Result<String, slickbi_cli::CliError> {
             let path = path_arg(args)?;
             inspect(&path)
         }
+        "schema" => Ok(format!("{}\n", schema()?)),
         "query" => {
             let path = path_arg(args)?;
             let Some(worksheet) = flag(args, "--worksheet") else {
@@ -130,6 +132,7 @@ Usage:
   slickbi-cli validate FILE.scz
   slickbi-cli compile  FILE.scz [--worksheet <id|name>]
   slickbi-cli inspect  FILE.scz
+  slickbi-cli schema
   slickbi-cli query    FILE.scz --worksheet <id|name> [--format table|csv]
   slickbi-cli render   FILE.scz --worksheet <id|name> --out chart.png [--width 800 --height 600]
                        [--print (Pro) --scale 2] [--svg (Pro)]
