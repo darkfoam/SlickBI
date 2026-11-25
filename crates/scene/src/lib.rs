@@ -484,10 +484,19 @@ fn column_title(columns: &[OutputColumn], kind: ChannelKind) -> Option<String> {
         .filter(|title| !title.is_empty())
 }
 
-/// The x values, either categorical or numeric.
+/// The x values: categorical labels, numeric values, or a temporal column that is both.
+///
+/// A temporal column carries its numeric ticks (days or milliseconds since the epoch) so a line,
+/// area or point chart can put it on a continuous axis, and the formatted labels so a bar, pie or
+/// table can treat it as categories.
 enum XData {
     Categorical(Vec<Option<String>>),
     Numeric(Vec<Option<f64>>),
+    Temporal {
+        values: Vec<Option<f64>>,
+        labels: Vec<Option<String>>,
+        unit: TemporalUnit,
+    },
 }
 
 /// Extra encodings that decorate marks: size, data labels and tooltips.
@@ -558,18 +567,22 @@ fn bar_scene(
     marks: &Marks,
 ) -> Result<Scene, SceneError> {
     // One axis is categorical (the categories) and the other numeric (the values). Categories on
-    // x give vertical columns; categories on y give horizontal bars.
-    let (vertical, categories, values) = match (&x, &y) {
-        (XData::Categorical(categories), XData::Numeric(values)) => {
-            (true, categories.clone(), values.clone())
+    // x give vertical columns; categories on y give horizontal bars. A temporal column is a set of
+    // categories for a bar; a date is never a bar's value axis.
+    let (vertical, categories, values) = if let Some(categories) = x.as_categories() {
+        let values = y.as_numeric().ok_or(SceneError::NumericYExpected)?.to_vec();
+        (true, categories.to_vec(), values)
+    } else if let Some(categories) = y.as_categories() {
+        if x.temporal_unit().is_some() {
+            return Err(SceneError::NumericXExpected);
         }
-        (XData::Numeric(values), XData::Categorical(categories)) => {
-            (false, categories.clone(), values.clone())
-        }
-        (XData::Numeric(_), XData::Numeric(_)) => return Err(SceneError::CategoricalXExpected),
-        (XData::Categorical(_), XData::Categorical(_)) => {
-            return Err(SceneError::NumericYExpected);
-        }
+        let values = x
+            .as_numeric()
+            .ok_or(SceneError::CategoricalXExpected)?
+            .to_vec();
+        (false, categories.to_vec(), values)
+    } else {
+        return Err(SceneError::CategoricalXExpected);
     };
 
     let (distinct, category_of) = dedup(&categories);
@@ -720,6 +733,7 @@ fn line_scene(
     let labels = Vec::new();
     let tooltips = Vec::new();
     let x_numeric = x.as_numeric().ok_or(SceneError::NumericXExpected)?;
+    let x_unit = x.temporal_unit();
 
     let groups = series_groups(&color, y.len());
 
@@ -762,12 +776,20 @@ fn line_scene(
     }
 
     let x_axis = Axis {
-        ticks: linear_ticks(
-            &x_scale,
-            plot,
-            false,
-            column_format(spec.columns, ChannelKind::X),
-        ),
+        ticks: match x_unit {
+            Some(unit) => temporal_ticks(
+                &x_scale,
+                plot,
+                unit,
+                column_format(spec.columns, ChannelKind::X),
+            ),
+            None => linear_ticks(
+                &x_scale,
+                plot,
+                false,
+                column_format(spec.columns, ChannelKind::X),
+            ),
+        },
         categorical: false,
     };
     let y_axis = numeric_axis(&y_scale, plot, column_format(spec.columns, ChannelKind::Y));
@@ -797,6 +819,7 @@ fn point_scene(
     marks: &Marks,
 ) -> Result<Scene, SceneError> {
     let x_numeric = x.as_numeric().ok_or(SceneError::NumericXExpected)?;
+    let x_unit = x.temporal_unit();
 
     let groups = series_groups(&color, y.len());
 
@@ -808,6 +831,11 @@ fn point_scene(
     let mut series = Vec::with_capacity(groups.len());
     let mut labels = Vec::new();
     let mut tooltips = Vec::new();
+    let x_format = column_format(spec.columns, ChannelKind::X);
+    let x_text = |value: f64| match x_unit {
+        Some(unit) => format_temporal(value.round() as i64, unit, x_format),
+        None => format_number(value, x_format),
+    };
     for (index, (label, rows)) in groups.iter().enumerate() {
         let mut points = Vec::new();
         for &row in rows {
@@ -833,7 +861,7 @@ fn point_scene(
                 x: position.x,
                 y: position.y,
                 radius: position.radius.max(6.0),
-                text: marks.tooltip_text(row, Some(format_number(x, None)), Some(y)),
+                text: marks.tooltip_text(row, Some(x_text(x)), Some(y)),
             });
             points.push(position);
         }
@@ -849,12 +877,20 @@ fn point_scene(
         height: spec.size.1,
         plot,
         x_axis: Axis {
-            ticks: linear_ticks(
-                &x_scale,
-                plot,
-                false,
-                column_format(spec.columns, ChannelKind::X),
-            ),
+            ticks: match x_unit {
+                Some(unit) => temporal_ticks(
+                    &x_scale,
+                    plot,
+                    unit,
+                    column_format(spec.columns, ChannelKind::X),
+                ),
+                None => linear_ticks(
+                    &x_scale,
+                    plot,
+                    false,
+                    column_format(spec.columns, ChannelKind::X),
+                ),
+            },
             categorical: false,
         },
         y_axis: numeric_axis(&y_scale, plot, column_format(spec.columns, ChannelKind::Y)),
@@ -883,7 +919,7 @@ fn arc_scene(
 ) -> Result<Scene, SceneError> {
     let labels = Vec::new();
     let tooltips = Vec::new();
-    let categories = x.as_categorical().ok_or(SceneError::CategoricalXExpected)?;
+    let categories = x.as_categories().ok_or(SceneError::CategoricalXExpected)?;
 
     let center = Point {
         x: plot.x + plot.width / 2.0,
@@ -1109,17 +1145,30 @@ fn table_scene(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
 }
 
 impl XData {
-    fn as_categorical(&self) -> Option<&[Option<String>]> {
+    /// The values as category labels: categorical labels, or a temporal column's formatted dates.
+    fn as_categories(&self) -> Option<&[Option<String>]> {
         match self {
             XData::Categorical(values) => Some(values),
+            XData::Temporal { labels, .. } => Some(labels),
             XData::Numeric(_) => None,
         }
     }
 
+    /// The values as numbers: numeric values, or a temporal column's ticks. A temporal column is
+    /// numeric only for a value axis (a line, area or point); it is never a bar's value axis.
     fn as_numeric(&self) -> Option<&[Option<f64>]> {
         match self {
             XData::Numeric(values) => Some(values),
+            XData::Temporal { values, .. } => Some(values),
             XData::Categorical(_) => None,
+        }
+    }
+
+    /// The time unit when the column is temporal, so ticks can be formatted as dates.
+    fn temporal_unit(&self) -> Option<TemporalUnit> {
+        match self {
+            XData::Temporal { unit, .. } => Some(*unit),
+            _ => None,
         }
     }
 
@@ -1127,6 +1176,7 @@ impl XData {
     fn into_numeric(self) -> Option<Vec<Option<f64>>> {
         match self {
             XData::Numeric(values) => Some(values),
+            XData::Temporal { values, .. } => Some(values),
             XData::Categorical(_) => None,
         }
     }
@@ -1202,6 +1252,23 @@ fn linear_ticks(
                 position,
                 text: format_number(value, format),
             }
+        })
+        .collect()
+}
+
+/// Builds ticks for a temporal scale: numeric positions with date-formatted labels.
+fn temporal_ticks(
+    scale: &LinearScale,
+    plot: Rect,
+    unit: TemporalUnit,
+    format: Option<&FieldFormat>,
+) -> Vec<Tick> {
+    scale
+        .ticks(6)
+        .into_iter()
+        .map(|value| Tick {
+            position: scale.map(value, plot.x, plot.width),
+            text: format_temporal(value.round() as i64, unit, format),
         })
         .collect()
 }
@@ -1360,23 +1427,37 @@ fn temporal_raw(column: &dyn Array) -> Option<(Vec<Option<i64>>, TemporalUnit)> 
     ))
 }
 
+/// The numeric ticks, formatted labels and unit of a temporal column.
+type TemporalAxis = (Vec<Option<f64>>, Vec<Option<String>>, TemporalUnit);
+
+/// Reads a temporal column as numeric ticks plus formatted labels, or `None` when the column is not
+/// temporal (or there are no batches to inspect).
+fn read_temporal_axis(
+    batches: &[RecordBatch],
+    index: usize,
+    format: Option<&FieldFormat>,
+) -> Option<TemporalAxis> {
+    let mut values = Vec::new();
+    let mut labels = Vec::new();
+    let mut unit = None;
+    for batch in batches {
+        let (raw, batch_unit) = temporal_raw(batch.column(index))?;
+        let unit = *unit.get_or_insert(batch_unit);
+        for value in raw {
+            values.push(value.map(|ticks| ticks as f64));
+            labels.push(value.map(|ticks| format_temporal(ticks, unit, format)));
+        }
+    }
+    Some((values, labels, unit?))
+}
+
 /// Reads a temporal column as formatted labels, or `None` when the column is not temporal.
 fn read_temporal_labels(
     batches: &[RecordBatch],
     index: usize,
     format: Option<&FieldFormat>,
 ) -> Option<Vec<Option<String>>> {
-    let mut labels = Vec::new();
-    let mut unit = None;
-    for batch in batches {
-        let (raw, batch_unit) = temporal_raw(batch.column(index))?;
-        let unit = *unit.get_or_insert(batch_unit);
-        labels.extend(
-            raw.into_iter()
-                .map(|value| value.map(|ticks| format_temporal(ticks, unit, format))),
-        );
-    }
-    Some(labels)
+    read_temporal_axis(batches, index, format).map(|(_, labels, _)| labels)
 }
 
 /// Formats one temporal tick value with a `%Y-%m-%d %H:%M:%S`-style pattern.
@@ -1462,8 +1543,12 @@ fn read_axis(
     y: bool,
     format: Option<&FieldFormat>,
 ) -> Result<XData, SceneError> {
-    if let Some(labels) = read_temporal_labels(batches, index, format) {
-        return Ok(XData::Categorical(labels));
+    if let Some((values, labels, unit)) = read_temporal_axis(batches, index, format) {
+        return Ok(XData::Temporal {
+            values,
+            labels,
+            unit,
+        });
     }
 
     let mixed = || {
@@ -2374,8 +2459,54 @@ mod tests {
         let columns = vec![day, column(ChannelKind::Y, "y")];
 
         let scene = build(&spec(Mark::Bar, &columns, &[batch])).expect("builds");
+        assert!(scene.x_axis.categorical, "a date on a bar stays a category");
         let texts: Vec<&str> = scene.x_axis.ticks.iter().map(|t| t.text.as_str()).collect();
         assert!(texts.contains(&"01/01/1970"), "labels: {texts:?}");
         assert!(texts.contains(&"01/02/1970"), "labels: {texts:?}");
+    }
+
+    #[test]
+    fn a_date_on_a_line_is_a_continuous_time_axis() {
+        let schema = Schema::new(vec![
+            Field::new("day", DataType::Date32, true),
+            Field::new("balance", DataType::Float64, true),
+        ]);
+        // A month of daily balances that drain linearly, the motivating bank-account case.
+        let days = arrow::array::Date32Array::from((0..31).collect::<Vec<i32>>());
+        let balances: Vec<f64> = (0..31).map(|day| 2_000.0 - day as f64 * 50.0).collect();
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(days), Arc::new(Float64Array::from(balances))],
+        )
+        .expect("batch");
+        let columns = vec![
+            column(ChannelKind::X, "day"),
+            column(ChannelKind::Y, "balance"),
+        ];
+
+        let scene = build(&spec(Mark::Line, &columns, &[batch])).expect("a date on a line builds");
+        assert!(!scene.x_axis.categorical, "the time axis is continuous");
+        let texts: Vec<&str> = scene.x_axis.ticks.iter().map(|t| t.text.as_str()).collect();
+        assert!(
+            !texts.is_empty()
+                && texts
+                    .iter()
+                    .all(|text| text.len() == 10 && text.as_bytes()[4] == b'-'),
+            "date tick labels: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|text| text.starts_with("1970-01")),
+            "date tick labels: {texts:?}"
+        );
+
+        let SeriesKind::Line(points) = &scene.series[0].kind else {
+            panic!("a line series");
+        };
+        assert_eq!(points.len(), 31, "every day is drawn");
+        assert!(points[0].x < points[30].x, "later dates are further right");
+        assert!(
+            points[0].y < points[30].y,
+            "the drained balance is drawn lower at the end of the month"
+        );
     }
 }

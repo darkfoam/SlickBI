@@ -1263,6 +1263,40 @@ mod tests {
     }
 
     #[test]
+    fn a_date_column_on_a_line_builds_a_continuous_axis() {
+        let path = temp("balance.csv");
+        std::fs::write(
+            &path,
+            "day,balance\n\
+             2025-01-01,2000\n\
+             2025-01-08,1800\n\
+             2025-01-15,1400\n\
+             2025-01-22,1000\n\
+             2025-01-29,500\n",
+        )
+        .expect("writes csv");
+        let mut session = Session::new();
+        session.load_file(&path, SourceFormat::Csv).expect("loads");
+        session.assign(Shelf::X, &FieldId::new("day"));
+        session.assign(Shelf::Y, &FieldId::new("balance"));
+        session.set_mark(Mark::Line);
+
+        let scene = session.scene().expect("scene builds");
+        assert!(!scene.x_axis.categorical, "the time axis is continuous");
+        let ticks: Vec<&str> = scene.x_axis.ticks.iter().map(|t| t.text.as_str()).collect();
+        assert!(
+            ticks.iter().any(|text| text.starts_with("2025-01")),
+            "date ticks: {ticks:?}"
+        );
+        assert!(matches!(
+            scene.series[0].kind,
+            slickbi_scene::SeriesKind::Line(_)
+        ));
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
     fn connecting_to_sqlite_adds_a_queryable_worksheet() {
         let path = temp("connect.sqlite");
         {
