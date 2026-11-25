@@ -29,7 +29,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **48 MVP-scope features**: **34 done, 7 partial, 7 not started**.
+At the snapshot, of the **48 MVP-scope features**: **35 done, 6 partial, 7 not started**.
 
 ---
 
@@ -80,7 +80,7 @@ At the snapshot, of the **48 MVP-scope features**: **34 done, 7 partial, 7 not s
 | V07 | Sort and row limit | **Done** | toolbar + planner `ORDER BY`/`LIMIT` | — |
 | V08 | Heatmaps | **Not started** | `Mark::Rect` exists; scene rejects it; needs a colour scale | M |
 | V09 | Pie and donut | **Done** | Pie (`a6d91c9`) and donut (`f45f9de`), both with legends | — |
-| V10 | KPI and text tiles | **Partial** | Planner emits a KPI plan (`kpi_tile.sql`, `Mark::Text`); scene rejects `Text` | M |
+| V10 | KPI and text tiles | **Done** | `Mark::Text` renders one formatted value, no axes needed | — |
 | V11 | Colourblind-safe palettes by default | **Done** | Okabe–Ito default palette; a test keeps the scene and theme in sync | — |
 | V12 | Automatic chart suggestion | **Not started** | — | M |
 | T01 | Tabs: create/rename/duplicate/close/reorder | **Done** | reorder added in `007cb37` | — |
