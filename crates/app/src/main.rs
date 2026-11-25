@@ -126,7 +126,11 @@ impl SlickBiApp {
         install_style(&cc.egui_ctx, false);
 
         SlickBiApp {
-            session: Session::new(),
+            session: {
+                let mut session = Session::new();
+                let _ = session.load_sample();
+                session
+            },
             mode: Mode::Charts,
             path_input: String::new(),
             sheet_pick: None,
@@ -455,6 +459,9 @@ impl SlickBiApp {
         let (dimensions, measures) = self.session.field_groups();
         if dimensions.is_empty() && measures.is_empty() {
             ui.label("Drop a CSV, Parquet or JSON file onto the window.");
+            if ui.button("Open the sample workbook").clicked() {
+                let _ = self.session.load_sample();
+            }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label("Or path:");

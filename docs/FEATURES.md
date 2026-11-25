@@ -209,7 +209,7 @@ leaving the machine on our behalf.
 | U05 | Auto-update with signed manifests | F | 0.1.0 | planned |
 | U06 | File association for `.scz` | F | 0.1.0 | planned |
 | U07 | Dark and light themes | F | 0.0.3 | done |
-| U08 | Onboarding sample workbook | F | 0.0.3 | planned |
+| U08 | Onboarding sample workbook | F | 0.0.3 | done |
 | U09 | Keyboard-complete navigation and screen-reader support | F | 0.2.0 | planned |
 | U10 | Accessible data-table fallback for every chart | F | 0.2.0 | planned |
 | U11 | Localisation infrastructure | F | 0.2.0 | planned |

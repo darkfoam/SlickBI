@@ -30,7 +30,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **51 MVP-scope features**: **50 done, 0 partial, 1 not started**.
+At the snapshot, of the **51 MVP-scope features**: **51 done, 0 partial, 0 not started**.
 
 ---
 
@@ -115,7 +115,7 @@ At the snapshot, of the **51 MVP-scope features**: **50 done, 0 partial, 1 not s
 | O02 | Generated JSON Schema, published | **Done** | `docs/workbook.schema.json`, `slickbi-cli schema`, drift + output-validation tests (MVP-20) | — |
 | O04 | Versioning and migration policy | **Done** | Policy in `docs/FORMAT.md`; `from_json_str` migrates through a named seam | — |
 | U07 | Dark and light themes | **Done** | Light/dark switch in the top bar | — |
-| U08 | Onboarding sample workbook | **Not started** | — | S |
+| U08 | Onboarding sample workbook | **Done** | Six months of sample sales, two charts (bar and time line) and a report, loaded on first run | — |
 
 ---
 
@@ -187,7 +187,7 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [x] **V06 axis titles + tooltips** — done. **M**
 - [x] **V11 palette verification** — Okabe–Ito default; scene/theme kept in sync by a test. **S**
 - [x] **U07 dark mode** — light/dark switch in the top bar (persistence not yet). **S**
-- [ ] **U08 onboarding workbook** — generate a small sample `.scz` on first run. **S**
+- [x] **U08 onboarding workbook** — sample sales, two charts and a report; loaded on first run. **S**
 
 ### Phase 2 — chart types (each needs the scene + both renderers)
 - [x] **V10 KPI/text tiles** — scene for `Mark::Text` (planner already plans it). **M**

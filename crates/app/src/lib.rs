@@ -10,14 +10,14 @@
 
 use std::path::{Path, PathBuf};
 
-use slickbi_engine::{Engine, SourceFormat};
+use slickbi_engine::{Cell, Engine, SourceFormat, StorageType};
 use slickbi_model::Model;
 use slickbi_planner::{PlanOptions, plan};
 use slickbi_scene::{Margins, Scene, SceneOptions, SceneSpec, build};
 use slickbi_spec::{
-    Agg, Channel, Connection, ConnectionId, DataModelId, DataType, ElementId, Field, FieldFormat,
-    FieldId, FieldSource, Filter, FilterOp, Mark, ParamId, Parameter, Report, Role, Scalar,
-    SortKey, Workbook, Worksheet, WorksheetId,
+    Agg, Channel, Connection, ConnectionId, DataModelId, DataType, ElementId, Encoding, Field,
+    FieldFormat, FieldId, FieldSource, Filter, FilterOp, Mark, ParamId, Parameter, Report, Role,
+    Scalar, SortKey, Workbook, Worksheet, WorksheetId,
 };
 use slickbi_workbook::Scz;
 use thiserror::Error;
@@ -130,6 +130,216 @@ impl Session {
     /// The workbook document.
     pub fn workbook(&self) -> &Workbook {
         &self.workbook
+    }
+
+    /// Clears the session to an empty workbook and a fresh engine.
+    fn reset(&mut self) {
+        self.reset_to(Engine::open().expect("engine opens"));
+    }
+
+    /// Replaces the engine and clears the workbook, after the new engine has read its source.
+    fn reset_to(&mut self, engine: Engine) {
+        for path in self.temp_files.drain(..) {
+            std::fs::remove_file(path).ok();
+        }
+        self.engine = engine;
+        self.workbook = Workbook::new(
+            slickbi_spec::WorkbookId::new("w1"),
+            slickbi_spec::WorkbookMeta::new("Untitled"),
+        );
+        self.source = None;
+        self.live = None;
+        self.cross_filter = None;
+        self.active = 0;
+        self.active_report = 0;
+        self.scene = None;
+        self.error = None;
+    }
+
+    /// Loads the small onboarding workbook: six months of sample sales, two charts and a report.
+    ///
+    /// The rows are registered in the engine and the save path writes them as an extract, so the
+    /// sample opens and saves like any other workbook.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Engine`] if the sample rows cannot be registered.
+    pub fn load_sample(&mut self) -> Result<(), SessionError> {
+        self.reset();
+
+        // Six first-of-month dates: 2025-01-01 through 2025-06-01, as days since the epoch.
+        const MONTHS: [i32; 6] = [20_089, 20_120, 20_148, 20_179, 20_209, 20_240];
+        const REGIONS: [&str; 3] = ["North", "South", "West"];
+        let revenue: [[f64; 3]; 6] = [
+            [12_400.0, 9_800.0, 7_250.0],
+            [13_100.0, 10_200.0, 7_900.0],
+            [12_850.0, 11_400.0, 8_300.0],
+            [14_600.0, 12_100.0, 8_050.0],
+            [15_200.0, 11_900.0, 9_400.0],
+            [16_050.0, 13_300.0, 9_900.0],
+        ];
+        let mut rows = Vec::new();
+        for (month, values) in MONTHS.iter().zip(revenue.iter()) {
+            for (region, value) in REGIONS.iter().zip(values.iter()) {
+                let orders = (value / 125.0).round() as i64;
+                rows.push(vec![
+                    Cell::Date(*month),
+                    Cell::Text((*region).to_owned()),
+                    Cell::Number(*value),
+                    Cell::Integer(orders),
+                ]);
+            }
+        }
+        let storage = vec![
+            ("month".to_owned(), StorageType::Date),
+            ("region".to_owned(), StorageType::VarChar),
+            ("revenue".to_owned(), StorageType::Double),
+            ("orders".to_owned(), StorageType::BigInt),
+        ];
+        self.engine
+            .register_rows(slickbi_connectors::TABLE_NAME, &storage, &rows)?;
+
+        let column = |id: &str, data_type: DataType| slickbi_spec::Column {
+            id: slickbi_spec::ColumnId::new(id),
+            name: id.to_owned(),
+            data_type,
+            nullable: false,
+        };
+        let field =
+            |id: &str, name: &str, role: Role, data_type: DataType, description: &str| Field {
+                id: FieldId::new(id),
+                name: name.to_owned(),
+                table: slickbi_spec::TableId::new(slickbi_connectors::TABLE_NAME),
+                source: FieldSource::Column {
+                    column: slickbi_spec::ColumnId::new(id),
+                },
+                role,
+                data_type,
+                format: None,
+                hidden: false,
+                folder: None,
+                description: Some(description.to_owned()),
+            };
+        let model = slickbi_spec::DataModel {
+            id: DataModelId::new("m1"),
+            name: "Sample sales".to_owned(),
+            tables: vec![slickbi_spec::Table {
+                id: slickbi_spec::TableId::new(slickbi_connectors::TABLE_NAME),
+                name: slickbi_connectors::TABLE_NAME.to_owned(),
+                columns: vec![
+                    column("month", DataType::Date),
+                    column("region", DataType::Text),
+                    column("revenue", DataType::Number),
+                    column("orders", DataType::Integer),
+                ],
+            }],
+            fields: vec![
+                field(
+                    "month",
+                    "Month",
+                    Role::Dimension,
+                    DataType::Date,
+                    "The month the sales landed.",
+                ),
+                field(
+                    "region",
+                    "Region",
+                    Role::Dimension,
+                    DataType::Text,
+                    "Sales region.",
+                ),
+                field(
+                    "revenue",
+                    "Revenue",
+                    Role::Measure,
+                    DataType::Number,
+                    "Sample revenue, in the sample currency.",
+                ),
+                field(
+                    "orders",
+                    "Orders",
+                    Role::Measure,
+                    DataType::Integer,
+                    "Number of orders in the month.",
+                ),
+            ],
+            relationships: vec![],
+        };
+
+        let channel = |id: &str, agg: Agg| Channel {
+            field: FieldId::new(id),
+            agg,
+            title: None,
+            scale: None,
+        };
+        let bar = Worksheet {
+            id: WorksheetId::new("sample-bar"),
+            name: "Revenue by region".to_owned(),
+            model: DataModelId::new("m1"),
+            mark: Mark::Bar,
+            encoding: Encoding {
+                x: Some(channel("region", Agg::None)),
+                y: Some(channel("revenue", Agg::Sum)),
+                ..Encoding::default()
+            },
+            transforms: vec![],
+            filters: vec![],
+            scales: vec![],
+            sort: vec![],
+            limit: None,
+            description: Some("Sum of revenue for each region.".to_owned()),
+        };
+        let line = Worksheet {
+            id: WorksheetId::new("sample-line"),
+            name: "Revenue over time".to_owned(),
+            model: DataModelId::new("m1"),
+            mark: Mark::Line,
+            encoding: Encoding {
+                x: Some(channel("month", Agg::None)),
+                y: Some(channel("revenue", Agg::Sum)),
+                ..Encoding::default()
+            },
+            transforms: vec![],
+            filters: vec![],
+            scales: vec![],
+            sort: vec![],
+            limit: None,
+            description: Some("Monthly revenue on a continuous time axis.".to_owned()),
+        };
+
+        let canvas = slickbi_spec::Canvas::standard();
+        let element = |id: &str, index: usize, worksheet: &WorksheetId| slickbi_spec::Element {
+            id: ElementId::new(id),
+            frame: grid_frame(index, canvas),
+            kind: slickbi_spec::ElementKind::Chart {
+                chart: slickbi_spec::ChartElement {
+                    worksheet: worksheet.clone(),
+                    title: None,
+                    overrides: slickbi_spec::Overrides::default(),
+                },
+            },
+        };
+        let report = Report {
+            id: slickbi_spec::ReportId::new("sample-report"),
+            name: "Sample report".to_owned(),
+            target: slickbi_spec::ReportTarget::Screen,
+            theme: Some("slate".to_owned()),
+            canvas,
+            elements: vec![
+                element("sample-bar-element", 0, &bar.id),
+                element("sample-line-element", 1, &line.id),
+            ],
+        };
+
+        self.workbook.models.push(model);
+        self.workbook.worksheets.push(bar);
+        self.workbook.worksheets.push(line);
+        self.workbook.reports.push(report);
+        self.active = 0;
+        self.active_report = 0;
+        self.source = None;
+        self.refresh();
+        Ok(())
     }
 
     /// The cached scene, if one was built.
@@ -266,7 +476,9 @@ impl Session {
 
     /// Loads a data file: discovers its schema, registers it, and adds a worksheet.
     pub fn load_file(&mut self, path: &Path, format: SourceFormat) -> Result<(), SessionError> {
-        let model = slickbi_connectors::open_file(&self.engine, path, format)?;
+        let engine = Engine::open()?;
+        let model = slickbi_connectors::open_file(&engine, path, format)?;
+        self.reset_to(engine);
 
         self.workbook.models.push(model);
         self.workbook
@@ -338,7 +550,9 @@ impl Session {
         kind: slickbi_connectors::SpreadsheetKind,
         sheet: Option<&str>,
     ) -> Result<(), SessionError> {
-        let table = slickbi_connectors::open_spreadsheet(&self.engine, path, kind, sheet)?;
+        let engine = Engine::open()?;
+        let table = slickbi_connectors::open_spreadsheet(&engine, path, kind, sheet)?;
+        self.reset_to(engine);
 
         self.workbook.models.push(table.model);
         self.workbook.connections.push(Connection {
@@ -407,11 +621,13 @@ impl Session {
     ) -> Result<(), SessionError> {
         let source = database_source(kind, location, user, password, table);
         let imported = slickbi_connectors::read_database(&source)?;
-        self.engine.register_rows(
+        let engine = Engine::open()?;
+        engine.register_rows(
             slickbi_connectors::TABLE_NAME,
             &imported.columns,
             &imported.rows,
         )?;
+        self.reset_to(engine);
 
         self.workbook.models.push(imported.model);
         self.workbook.connections.push(Connection {
@@ -2877,6 +3093,57 @@ mod tests {
             "the currency format reached the axis: {texts:?}"
         );
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn the_sample_workbook_round_trips_and_is_replaced_by_a_source() {
+        let mut session = Session::new();
+        session.load_sample().expect("loads the sample");
+        assert_eq!(session.worksheet_count(), 2);
+        assert_eq!(session.reports().len(), 1);
+        assert!(session.scene().is_some(), "the bar chart builds");
+        assert!(session.has_source());
+
+        let line = session.workbook().worksheets[1].id.clone();
+        assert!(session.activate_worksheet(&line));
+        let scene = session
+            .scene_for(&line, (500.0, 300.0))
+            .expect("scene")
+            .expect("some");
+        assert!(
+            !scene.x_axis.categorical,
+            "the sample time axis is continuous"
+        );
+        assert!(
+            scene
+                .x_axis
+                .ticks
+                .iter()
+                .any(|tick| tick.text.starts_with("2025-")),
+            "date ticks: {:?}",
+            scene
+                .x_axis
+                .ticks
+                .iter()
+                .map(|tick| &tick.text)
+                .collect::<Vec<_>>()
+        );
+
+        let sample = temp("sample.scz");
+        session.save(&sample).expect("saves the sample");
+        let mut reopened = Session::new();
+        reopened.open(&sample).expect("opens the sample");
+        assert_eq!(reopened.worksheet_count(), 2);
+        assert!(reopened.scene().is_some());
+
+        let csv = temp("after-sample.csv");
+        std::fs::write(&csv, "region,amount\nEMEA,10\n").expect("writes csv");
+        session.load_file(&csv, SourceFormat::Csv).expect("loads");
+        assert_eq!(session.worksheet_count(), 1, "the sample is replaced");
+        assert_eq!(session.workbook().models.len(), 1);
+
+        std::fs::remove_file(&sample).ok();
+        std::fs::remove_file(&csv).ok();
     }
 
     #[test]
