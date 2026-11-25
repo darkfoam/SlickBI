@@ -964,8 +964,8 @@ fn heat_scene(
     } else {
         0.0
     };
-    let color_title = column_title(spec.columns, ChannelKind::Color)
-        .unwrap_or_else(|| "Value".to_owned());
+    let color_title =
+        column_title(spec.columns, ChannelKind::Color).unwrap_or_else(|| "Value".to_owned());
 
     let mut cells = Vec::new();
     let mut tooltips = Vec::new();
@@ -2157,11 +2157,24 @@ mod tests {
         };
         assert_eq!(cells.len(), 4);
         assert!(scene.x_axis.categorical && scene.y_axis.categorical);
-        let x_labels: Vec<&str> = scene.x_axis.ticks.iter().map(|tick| tick.text.as_str()).collect();
-        let y_labels: Vec<&str> = scene.y_axis.ticks.iter().map(|tick| tick.text.as_str()).collect();
+        let x_labels: Vec<&str> = scene
+            .x_axis
+            .ticks
+            .iter()
+            .map(|tick| tick.text.as_str())
+            .collect();
+        let y_labels: Vec<&str> = scene
+            .y_axis
+            .ticks
+            .iter()
+            .map(|tick| tick.text.as_str())
+            .collect();
         assert_eq!(x_labels, vec!["A", "B"]);
         assert_eq!(y_labels, vec!["One", "Two"]);
-        assert!(cells[0].x < cells[1].x, "the second column is further right");
+        assert!(
+            cells[0].x < cells[1].x,
+            "the second column is further right"
+        );
         assert!(cells[0].y < cells[2].y, "the second row is lower");
         assert!(
             cells[0].color[2] > cells[3].color[2],

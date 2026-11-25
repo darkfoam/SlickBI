@@ -2113,7 +2113,8 @@ mod tests {
     }
 
     #[test]
-    fn a_date_column_on_a_line_builds_a_continuous_axis() {        let path = temp("balance.csv");
+    fn a_date_column_on_a_line_builds_a_continuous_axis() {
+        let path = temp("balance.csv");
         std::fs::write(
             &path,
             "day,balance\n\
