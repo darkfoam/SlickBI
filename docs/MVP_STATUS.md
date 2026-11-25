@@ -29,7 +29,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **48 MVP-scope features**: **37 done, 4 partial, 7 not started**.
+At the snapshot, of the **48 MVP-scope features**: **39 done, 2 partial, 7 not started**.
 
 ---
 
@@ -74,7 +74,7 @@ At the snapshot, of the **48 MVP-scope features**: **37 done, 4 partial, 7 not s
 | V01 | Bar and column charts | **Done** | Vertical and horizontal, grouped by colour (`5268723`) | — |
 | V02 | Line and area charts | **Done** | Multi-series by colour | — |
 | V03 | Scatter plots | **Done** | Multi-series by colour | — |
-| V04 | Tables | **Partial** | Planner emits a raw-row plan (`table_raw.sql` golden); **no scene, renderer or UI**. Needs a table mark/sheet type — a serialised-format decision + fixture | L |
+| V04 | Tables | **Done** | `Mark::Table`: headers, formatted cells, a header separator, in all renderers | — |
 | V05 | Shelves: row, column, colour, size, text, detail, tooltip | **Done** | All seven; size scales points, text labels marks, detail splits, tooltip feeds hover | — |
 | V06 | Axis, legend and tooltip configuration | **Done** | Axis titles, legend/axes visibility, hover tooltips driven by the tooltip shelf | — |
 | V07 | Sort and row limit | **Done** | toolbar + planner `ORDER BY`/`LIMIT` | — |
@@ -106,7 +106,7 @@ At the snapshot, of the **48 MVP-scope features**: **37 done, 4 partial, 7 not s
 |---|---|---|---|---|
 | X01 | Raw CSV/Parquet export | **Done** | app + CLI; but see MVP-17 (not byte-identical to DuckDB) | — |
 | A01 | CLI validate/compile/query/inspect | **Done** | — | — |
-| A02 | CLI render worksheet **or report** | **Partial** | Worksheets render to preview/print/SVG; **reports are not rendered by the CLI** | M |
+| A02 | CLI render worksheet **or report** | **Done** | `slickbi-cli render-report` composes chart and text elements via `render_report_png` | — |
 | O01 | Published `.scz` specification | **Done** | `docs/FORMAT.md` | — |
 | O02 | Generated JSON Schema, published | **Done** | `docs/workbook.schema.json`, `slickbi-cli schema`, drift + output-validation tests (MVP-20) | — |
 | O04 | Versioning and migration policy | **Done** | Policy in `docs/FORMAT.md`; `from_json_str` migrates through a named seam | — |
@@ -195,8 +195,7 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 ### Phase 2 — chart types (each needs the scene + both renderers)
 - [ ] **V10 KPI/text tiles** — scene for `Mark::Text` (planner already plans it). **M**
 - [ ] **V08 heatmaps** — `Mark::Rect` + a sequential colour scale + two categorical axes. **M**
-- [ ] **V04 tables** — new mark/sheet type (format decision + migration fixture), scene text grid,
-      renderers, UI. **L**
+- [x] **V04 tables** — `Mark::Table`, text-grid scene, all renderers, UI. **L**
 - [x] **V05 remaining shelves** — size/text/detail/tooltip through the scene and renderers. **M**
 - [ ] **V12 chart suggestion** — pick a mark from the current shelves. **M**
 
