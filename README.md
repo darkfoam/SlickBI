@@ -29,6 +29,7 @@ and published reports. See [`docs/PRODUCT.md`](docs/PRODUCT.md).
 | [`docs/FEATURES.md`](docs/FEATURES.md) | The backlog, by feature ID |
 | [`docs/RELEASES.md`](docs/RELEASES.md) | Release plan and exit criteria |
 | [`docs/MVP.md`](docs/MVP.md) | MVP boundary, acceptance criteria, demo script |
+| [`docs/EXAMPLE_DATASETS.md`](docs/EXAMPLE_DATASETS.md) | Launch example datasets and their requirements |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design |
 | [`docs/TESTING.md`](docs/TESTING.md) | Test strategy and CI gates |
 | [`AGENTS.md`](AGENTS.md) | How work happens in this repository |
