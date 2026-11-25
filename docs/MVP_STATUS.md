@@ -29,7 +29,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **48 MVP-scope features**: **29 done, 12 partial, 7 not started**.
+At the snapshot, of the **48 MVP-scope features**: **34 done, 7 partial, 7 not started**.
 
 ---
 
@@ -46,7 +46,7 @@ At the snapshot, of the **48 MVP-scope features**: **29 done, 12 partial, 7 not 
 | D05 | SQLite | **Done** | Native `rusqlite` driver; columns read as text then typed into DuckDB; tested | — |
 | D06 | PostgreSQL | **Done** | Native `postgres` driver; verified against a real server | — |
 | D07 | MySQL / MariaDB | **Done** | Native `mysql` driver; verified against MariaDB | — |
-| D14 | Local extract to Parquet | **Partial** | `Session::save` embeds a Parquet extract per table; no user-facing "extract this source" action for arbitrary sources | M |
+| D14 | Local extract to Parquet | **Done** | `Session::export_extract` + an Export menu item write the source table as Parquet | — |
 | D15 | Live query mode | **Partial** | File sources are queried live; database live mode is not implemented (depends on D06/D07) | L |
 
 ### Semantic model
@@ -65,7 +65,7 @@ At the snapshot, of the **48 MVP-scope features**: **29 done, 12 partial, 7 not 
 | C01 | Arithmetic, comparison, IF/CASE, text, date | **Done** | `slickbi-calc` lexer/parser/typing/lowering | — |
 | C02 | Aggregations incl. distinct/median | **Done** | `Agg` → SQL; engine tests | — |
 | C03 | Parameters in calculations and filters | **Not started** | No `Parameter` in the document, no filter binding, no calc references. **MVP-06 depends on this** | L |
-| C04 | Type checking with inline, spanning errors | **Partial** | Typed `CalcError` carries spans; the editor shows the message text, not an inline highlight at the span | M |
+| C04 | Type checking with inline, spanning errors | **Done** | The calculation editor highlights the offending span | — |
 
 ### Charts and worksheets
 
@@ -107,9 +107,9 @@ At the snapshot, of the **48 MVP-scope features**: **29 done, 12 partial, 7 not 
 | X01 | Raw CSV/Parquet export | **Done** | app + CLI; but see MVP-17 (not byte-identical to DuckDB) | — |
 | A01 | CLI validate/compile/query/inspect | **Done** | — | — |
 | A02 | CLI render worksheet **or report** | **Partial** | Worksheets render to preview/print/SVG; **reports are not rendered by the CLI** | M |
-| O01 | Published `.scz` specification | **Partial** | Format + doc comments exist; no published specification document | M |
-| O02 | Generated JSON Schema, published | **Partial** | `workbook_schema()` + a shape test; not published/served, and the app's output is not validated against it (MVP-20) | M |
-| O04 | Versioning and migration policy | **Partial** | One format version with clean refusal; no migration machinery, fixtures or written policy | M |
+| O01 | Published `.scz` specification | **Done** | `docs/FORMAT.md` | — |
+| O02 | Generated JSON Schema, published | **Done** | `docs/workbook.schema.json`, `slickbi-cli schema`, drift + output-validation tests (MVP-20) | — |
+| O04 | Versioning and migration policy | **Done** | Policy in `docs/FORMAT.md`; `from_json_str` migrates through a named seam | — |
 | U07 | Dark and light themes | **Done** | Light/dark switch in the top bar | — |
 | U08 | Onboarding sample workbook | **Not started** | — | S |
 
@@ -126,7 +126,7 @@ At the snapshot, of the **48 MVP-scope features**: **29 done, 12 partial, 7 not 
 | 05 | Filter totals == WHERE | **Met** | filter tests + golden SQL |
 | 06 | Parameter bound to filter re-renders | **Not met** | C03 missing |
 | 07 | Divide-by-zero calc: null semantics, editor warns | **Partial** | SQL null behaviour holds; editor does not surface the risk |
-| 08 | Type error inline at span, not saved | **Partial** | Not saved (good); no inline span highlight |
+| 08 | Type error inline at span, not saved | **Met** | Inline span highlight; invalid expressions are not added |
 | 09 | Rename updates report panel + used-in | **Met** | name read live |
 | 10 | Delete used worksheet → placeholders, warns, names reports | **Met** | T05 fix + test |
 | 11 | Worksheet filter change updates open report | **Met** | report rebuilds from worksheet each frame |
@@ -138,9 +138,9 @@ At the snapshot, of the **48 MVP-scope features**: **29 done, 12 partial, 7 not 
 | 17 | CSV export byte-identical to DuckDB writer | **Not met** | Hand-rolled CSV in app and CLI (quoting/format can differ) |
 | 18 | `slickbi-cli render` report == on-screen within tolerance | **Partial** | CLI renders worksheets only; no image-diff harness |
 | 19 | 8 h soak, < 10 % memory growth | **Not met** | No soak test |
-| 20 | JSON Schema validates app output, zero errors | **Partial** | Schema generated; no validator run against output |
+| 20 | JSON Schema validates app output, zero errors | **Met** | `jsonschema` validates the serialised workbook; schema file cannot drift |
 
-Counts: **Met 8 · Partial 8 · Not met 4.**
+Counts: **Met 10 · Partial 6 · Not met 4.**
 
 ---
 
@@ -222,8 +222,8 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [ ] Credentials in the OS keychain — currently session-only, and never persisted. **M**
 
 ### Phase 6 — format, acceptance and release hardening
-- [ ] **O01** spec document, **O02** publish the schema and validate the app's own output
-      (**MVP-20**), **O04** migration policy + a 0.0.2 fixture (**MVP-16**). **M**
+- [x] **O01** spec document, **O02** publish the schema and validate the app's own output
+      (**MVP-20**), **O04** migration policy. **M**
 - [ ] **MVP-17** — export CSV through DuckDB's writer so it is byte-identical. **S**
 - [ ] **MVP-19** — soak test + memory budget; promote the perf fixture to a real 300 ms gate. **M**
 - [ ] **MVP-14** — a deterministic reflow test at 1400/900 px.
