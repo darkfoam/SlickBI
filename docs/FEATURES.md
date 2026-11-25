@@ -25,8 +25,8 @@ that needs different data is a forked worksheet.
 
 | ID | Feature | Tier | Release | Status |
 |---|---|---|---|---|
-| D01 | CSV, including drag and drop onto the window | F | 0.0.2 | done |
-| D02 | Excel workbooks (`.xlsx`) with sheet selection | F | 0.0.2 | planned |
+| D01 | CSV and TSV, including drag and drop onto the window, with currency and date formats parsed | F | 0.0.2 | done |
+| D02 | Excel workbooks (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`) with sheet selection | F | 0.0.2 | done |
 | D03 | Parquet | F | 0.0.2 | done |
 | D04 | JSON and newline-delimited JSON | F | 0.0.2 | done |
 | D05 | SQLite | F | 0.0.2 | done |
@@ -42,6 +42,8 @@ that needs different data is a forked worksheet.
 | D15 | Live query mode against the source | F | 0.0.3 | planned |
 | D16 | Relink a moved or renamed source | F | 0.1.0 | planned |
 | D17 | Refresh source schema and re-read | F | 0.1.0 | planned |
+| D18 | OpenDocument spreadsheets (`.ods`) with sheet selection | F | 0.0.3 | done |
+| D19 | Apple Numbers documents (`.numbers`) with table selection | F | 0.0.3 | done |
 
 ## Semantic model
 

@@ -115,6 +115,19 @@ The reference rule is enforced in the type system, not in the UI:
 
 Steps 2–5 run off the UI thread, coalesced: rapid edits cancel the previous plan and query.
 
+**Reading a source**
+
+CSV, Parquet and JSON are registered as views over the file, so every query reads its current
+contents. A CSV's text columns that hold money (`$1,234.56`, `-$7.77`, `($1.23)`) are selected
+through an expression that strips the formatting, and a file whose dates are written month/day/year
+is read with that date format, so the model sees numbers and dates rather than text.
+
+Excel, OpenDocument and Apple Numbers have no DuckDB scanner without an extension. Their first
+sheet (or the sheet the user picks) is read through a native Rust parser, and the rows are
+registered as a typed table: numbers, text, booleans, real dates and timestamps. A formula cell
+contributes the value the spreadsheet stored beside the formula, which is the result the user sees.
+Database sources are read the same way through their native driver.
+
 **Rendering a report**
 
 1. For each element referencing a worksheet: reuse the worksheet's cached scene if its inputs are

@@ -1,6 +1,7 @@
 # MVP status map — 0.0.3 "Workbench"
 
-Snapshot: 2026-11-25. Updated after the database sources and the continuous time axis landed.
+Snapshot: 2026-11-25. Updated after the database sources, spreadsheets and the continuous time
+axis landed.
 
 This is a **derived** map of what stands between the current tree and a completed MVP. The
 authoritative documents remain [`FEATURES.md`](FEATURES.md) (per-feature status),
@@ -29,7 +30,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **49 MVP-scope features**: **41 done, 1 partial, 7 not started**.
+At the snapshot, of the **51 MVP-scope features**: **44 done, 1 partial, 6 not started**.
 
 ---
 
@@ -39,15 +40,17 @@ At the snapshot, of the **49 MVP-scope features**: **41 done, 1 partial, 7 not s
 
 | ID | Feature | Status | Reality / gap | Effort |
 |---|---|---|---|---|
-| D01 | CSV + drag and drop | **Done** | `connectors::discover`, `Session::load_file`, window drop | — |
-| D02 | Excel `.xlsx` + sheet selection | **Not started** | DuckDB `excel` extension is disabled (no network auto-load); needs a reader crate (not in the local cargo cache) | L |
+| D01 | CSV and TSV + drag and drop | **Done** | `connectors::open_file` registers a live view; currency strings and `MM/DD/YY` dates are typed correctly | — |
+| D02 | Excel workbooks + sheet selection | **Done** | `calamine` reads `.xlsx`/`.xlsm`/`.xlsb`/`.xls`; a sheet picker appears when a workbook has more than one | — |
 | D03 | Parquet | **Done** | `read_parquet` discovery | — |
 | D04 | JSON / NDJSON | **Done** | `read_json_auto` | — |
-| D05 | SQLite | **Done** | Native `rusqlite` driver; columns read as text then typed into DuckDB; tested | — |
+| D05 | SQLite | **Done** | Native `rusqlite` driver; typed rows imported into DuckDB (dates now real dates); tested | — |
 | D06 | PostgreSQL | **Done** | Native `postgres` driver; verified against a real server | — |
 | D07 | MySQL / MariaDB | **Done** | Native `mysql` driver; verified against MariaDB | — |
 | D14 | Local extract to Parquet | **Done** | `Session::export_extract` + an Export menu item write the source table as Parquet | — |
 | D15 | Live query mode | **Partial** | File sources are queried live; database live mode is not implemented (depends on D06/D07) | L |
+| D18 | OpenDocument spreadsheets + sheet selection | **Done** | `calamine` reads `.ods` through the same typed importer as Excel | — |
+| D19 | Apple Numbers documents + table selection | **Done** | `iwork` reads the first table, or the one the user picks | — |
 
 ### Semantic model
 
@@ -218,9 +221,9 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [x] **D05 SQLite** — native `rusqlite` driver: read as text, typed into DuckDB. **L**
 - [x] **D06 Postgres** — native `postgres` driver, verified against a real server. **XL**
 - [x] **D07 MySQL / MariaDB** — native `mysql` driver, verified against MariaDB. **XL**
-- [ ] **D02 Excel** — reader crate (network to fetch). **L**
-- [ ] **D14 / D15** — explicit extract action and live DB mode; save already embeds a Parquet
-      extract, but live mode is not built. **L**
+- [x] **D02 Excel** — `calamine` reads workbooks; sheet picker. **L**
+- [x] **D18 / D19 ODS and Numbers** — `calamine` and `iwork` feed the same typed importer. **M**
+- [ ] **D14 / D15** — D14 done; live DB mode is not built. **L**
 - [ ] Credentials in the OS keychain — currently session-only, and never persisted. **M**
 
 ### Phase 6 — format, acceptance and release hardening
@@ -251,6 +254,6 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [ ] No ignored tests, warnings, or TODOs without IDs
 - [ ] Tag `0.0.3` on `main`, merged back to `dev`
 
-The largest risks to the MVP are the remaining source work (D02 Excel, D14/D15) and C03/R06. The
+The largest risks to the MVP are the remaining live database query mode (D15) and C03/R06. The
 cheapest large wins are Phase 1 (finish visible, half-built surface) and Phase 6 (acceptance
 hardening: CSV parity, schema validation, report render parity, soak gate).

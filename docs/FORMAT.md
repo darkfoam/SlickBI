@@ -60,7 +60,7 @@ A `Workbook` has these top-level fields:
 | `format_version` | integer | `1` for this document. |
 | `id` | string | Workbook identifier. |
 | `meta` | `WorkbookMeta` | `name` (required), `description`, `created`, `modified`, `app_version`. Timestamps are informational and may be absent. |
-| `connections` | array of `Connection` | Data sources. Never a secret. |
+| `connections` | array of `Connection` | Data sources. Never a secret. Kinds: `csv`, `parquet`, `json`, `excel`, `open_document`, `numbers`, `sqlite`, `postgres`, `mysql`. |
 | `models` | array of `DataModel` | Tables, columns, fields, relationships. |
 | `worksheets` | array of `Worksheet` | One chart per tab. |
 | `reports` | array of `Report` | Composed documents that reference worksheets. |

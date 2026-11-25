@@ -20,7 +20,7 @@ close the app if the first five minutes are confusing.
 
 | Area | Feature IDs |
 |---|---|
-| Sources | D01 CSV, D02 Excel, D03 Parquet, D04 JSON, D05 SQLite, D06 Postgres, D07 MySQL, D14 extracts, D15 live mode |
+| Sources | D01 CSV/TSV, D02 Excel, D03 Parquet, D04 JSON, D05 SQLite, D06 Postgres, D07 MySQL, D14 extracts, D15 live mode, D18 OpenDocument, D19 Numbers |
 | Model | M01 auto typing, M02 rename/hide/reorder/folders, M03 formats, M04 descriptions |
 | Calculations | C01 core expressions, C02 aggregations, C03 parameters, C04 inline type errors |
 | Charts | V01 bar, V02 line/area, V03 scatter, V04 table, V05 shelves, V06 axes/legends/tooltips, V07 sort/limit, V08 heatmap, V09 pie, V10 KPI, V11 palettes, V12 suggestion |
