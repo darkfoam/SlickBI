@@ -29,7 +29,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **48 MVP-scope features**: **35 done, 6 partial, 7 not started**.
+At the snapshot, of the **48 MVP-scope features**: **37 done, 4 partial, 7 not started**.
 
 ---
 
@@ -75,8 +75,8 @@ At the snapshot, of the **48 MVP-scope features**: **35 done, 6 partial, 7 not s
 | V02 | Line and area charts | **Done** | Multi-series by colour | — |
 | V03 | Scatter plots | **Done** | Multi-series by colour | — |
 | V04 | Tables | **Partial** | Planner emits a raw-row plan (`table_raw.sql` golden); **no scene, renderer or UI**. Needs a table mark/sheet type — a serialised-format decision + fixture | L |
-| V05 | Shelves: row, column, colour, size, text, detail, tooltip | **Partial** | x, y, colour done (with legend); `size`, `text`, `detail`, `tooltip` are modelled and planned but not drawn or exposed in the UI | M |
-| V06 | Axis, legend and tooltip configuration | **Partial** | Legend, show/hide axes and axis titles done; **tooltip configuration remains** | M |
+| V05 | Shelves: row, column, colour, size, text, detail, tooltip | **Done** | All seven; size scales points, text labels marks, detail splits, tooltip feeds hover | — |
+| V06 | Axis, legend and tooltip configuration | **Done** | Axis titles, legend/axes visibility, hover tooltips driven by the tooltip shelf | — |
 | V07 | Sort and row limit | **Done** | toolbar + planner `ORDER BY`/`LIMIT` | — |
 | V08 | Heatmaps | **Not started** | `Mark::Rect` exists; scene rejects it; needs a colour scale | M |
 | V09 | Pie and donut | **Done** | Pie (`a6d91c9`) and donut (`f45f9de`), both with legends | — |
@@ -187,7 +187,7 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [x] **M04 descriptions** — editor + tooltip; needs no format change. **S**
 - [x] **T06 jump to source** — click a report element to activate its worksheet. **S**
 - [ ] **M02 hide + reorder** — data-pane toggles; rename deferred or done with reference rewriting. **M**
-- [x] **V06 axis titles** — done; **tooltip configuration** remains. **M**
+- [x] **V06 axis titles + tooltips** — done. **M**
 - [x] **V11 palette verification** — Okabe–Ito default; scene/theme kept in sync by a test. **S**
 - [x] **U07 dark mode** — light/dark switch in the top bar (persistence not yet). **S**
 - [ ] **U08 onboarding workbook** — generate a small sample `.scz` on first run. **S**
@@ -197,7 +197,7 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [ ] **V08 heatmaps** — `Mark::Rect` + a sequential colour scale + two categorical axes. **M**
 - [ ] **V04 tables** — new mark/sheet type (format decision + migration fixture), scene text grid,
       renderers, UI. **L**
-- [ ] **V05 remaining shelves** — size/text/detail/tooltip through the scene and renderers. **M**
+- [x] **V05 remaining shelves** — size/text/detail/tooltip through the scene and renderers. **M**
 - [ ] **V12 chart suggestion** — pick a mark from the current shelves. **M**
 
 ### Phase 3 — analytical core
