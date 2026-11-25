@@ -219,6 +219,7 @@ leaving the machine on our behalf.
 | U15 | Plugin API for connectors and custom marks | F | 0.5.0 | planned |
 | U16 | Undo and redo across worksheets and reports | F | 0.1.0 | planned |
 | U17 | Keyboard shortcuts | F | 0.2.0 | planned |
+| U18 | Start screen: new/open workbook, sample entry point and five recent workbooks | F | 0.0.3 | done |
 
 ## Ideas recorded for later (not scheduled)
 

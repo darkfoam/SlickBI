@@ -29,7 +29,7 @@ close the app if the first five minutes are confusing.
 | Data out | X01 CSV/Parquet export |
 | Automation | A01 CLI, A02 CLI preview render |
 | Format | O01 published spec, O02 JSON Schema, O04 migration policy |
-| Platform | U07 themes, U08 onboarding workbook |
+| Platform | U07 themes, U08 onboarding workbook, U18 start screen and recents |
 
 ## 3. Explicitly not in the MVP
 

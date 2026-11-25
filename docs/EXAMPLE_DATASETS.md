@@ -471,7 +471,7 @@ other example is playable in the current single-table MVP with the shapes above.
 
 ## Prerequisites before inviting testers
 
-The feature set is complete (51/51), but the examples above do not exist yet and a few
+The feature set is complete (52/52), but the examples above do not exist yet and a few
 acceptance and distribution gaps matter for outside play.
 
 **Build the suite (the main work).**

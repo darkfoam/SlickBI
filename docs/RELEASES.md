@@ -85,7 +85,7 @@ merged to `main` and tagged there. Tags are never moved.
 **Purpose:** the product exists. Someone who is not the author can use it.
 
 **Scope:** D06, D07, D14, D15, D18, D19, M03, M04, C01–C04, V08–V12, V23, T03, T05, T06,
-R01–R06, X01, U07, U08, O01, O02, O04.
+R01–R06, X01, U07, U08, U18, O01, O02, O04.
 
 **Exit criteria**
 

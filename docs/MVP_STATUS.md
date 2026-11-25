@@ -1,6 +1,6 @@
 # MVP status map — 0.0.3 "Workbench"
 
-Snapshot: 2026-11-25. All 51 MVP-scope features are implemented; the remaining work is
+Snapshot: 2026-11-25. All 52 MVP-scope features are implemented; the remaining work is
 acceptance, quality and ship hardening.
 
 This is a **derived** map of what stands between the current tree and a completed MVP. The
@@ -30,7 +30,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **51 MVP-scope features**: **51 done, 0 partial, 0 not started**.
+At the snapshot, of the **52 MVP-scope features**: **52 done, 0 partial, 0 not started**.
 
 ---
 
@@ -115,7 +115,8 @@ At the snapshot, of the **51 MVP-scope features**: **51 done, 0 partial, 0 not s
 | O02 | Generated JSON Schema, published | **Done** | `docs/workbook.schema.json`, `slickbi-cli schema`, drift + output-validation tests (MVP-20) | — |
 | O04 | Versioning and migration policy | **Done** | Policy in `docs/FORMAT.md`; `from_json_str` migrates through a named seam | — |
 | U07 | Dark and light themes | **Done** | Light/dark switch in the top bar | — |
-| U08 | Onboarding sample workbook | **Done** | Six months of sample sales, two charts (bar and time line) and a report, loaded on first run | — |
+| U08 | Onboarding sample workbook | **Done** | Six months of sample sales, two charts (bar and time line) and a report, offered from the Start screen | — |
+| U18 | Start screen and recent workbooks | **Done** | Empty launch screen: New report, Open report, Open a data file, sample report, and the five most recent workbooks persisted under the OS config directory | — |
 
 ---
 
@@ -187,7 +188,8 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [x] **V06 axis titles + tooltips** — done. **M**
 - [x] **V11 palette verification** — Okabe–Ito default; scene/theme kept in sync by a test. **S**
 - [x] **U07 dark mode** — light/dark switch in the top bar (persistence not yet). **S**
-- [x] **U08 onboarding workbook** — sample sales, two charts and a report; loaded on first run. **S**
+- [x] **U08 onboarding workbook** — sample sales, two charts and a report; offered from the Start screen. **S**
+- [x] **U18 start screen and recents** — empty launch, new/open, sample, five persisted recent workbooks. **M**
 
 ### Phase 2 — chart types (each needs the scene + both renderers)
 - [x] **V10 KPI/text tiles** — scene for `Mark::Text` (planner already plans it). **M**
