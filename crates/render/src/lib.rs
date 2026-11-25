@@ -101,6 +101,159 @@ pub fn render_preview_png(scene: &Scene) -> Result<Vec<u8>, RenderError> {
     encode_png(&pixmap)
 }
 
+/// The band above a chart in a report that holds its title, in points.
+pub const REPORT_TITLE_BAND: f32 = 22.0;
+
+/// One positioned item when rendering a report.
+///
+/// A chart layer's scene must be built at `(width, height - title band)` when a title is drawn;
+/// the compositor places it below the title band and above the border.
+pub struct ReportLayer<'a> {
+    /// Left edge, in report points.
+    pub x: f32,
+    /// Top edge, in report points.
+    pub y: f32,
+    /// Width, in report points.
+    pub width: f32,
+    /// Height, in report points.
+    pub height: f32,
+    /// A chart scene.
+    pub scene: Option<&'a Scene>,
+    /// A text block, drawn line by line.
+    pub text: Option<&'a str>,
+    /// A title drawn above the chart.
+    pub title: Option<&'a str>,
+    /// Whether to draw a border around the layer.
+    pub border: bool,
+    /// A background fill, when set.
+    pub background: Option<[f32; 4]>,
+}
+
+/// Renders a composed report to a PNG.
+///
+/// # Errors
+///
+/// Returns [`RenderError`] if the pixmap cannot be encoded.
+pub fn render_report_png(
+    size: (f32, f32),
+    scale: f32,
+    background: [f32; 4],
+    ink: [f32; 4],
+    layers: &[ReportLayer<'_>],
+    watermark: bool,
+) -> Result<Vec<u8>, RenderError> {
+    let width = (size.0 * scale).round().max(1.0) as u32;
+    let height = (size.1 * scale).round().max(1.0) as u32;
+    let mut pixmap = Pixmap::new(width, height).expect("non-zero pixmap");
+    pixmap.fill(color(background));
+    let font = FontArc::try_from_slice(include_bytes!("../fonts/Inter-Regular.ttf"))
+        .expect("bundled font");
+
+    for layer in layers {
+        let rect = Rect::from_xywh(
+            layer.x * scale,
+            layer.y * scale,
+            (layer.width * scale).max(1.0),
+            (layer.height * scale).max(1.0),
+        );
+        if let Some(background) = layer.background
+            && let Some(rect) = rect
+        {
+            pixmap.fill_rect(rect, &solid(background), Transform::identity(), None);
+        }
+
+        let mut content_y = layer.y;
+        let mut content_height = layer.height;
+        if let Some(title) = layer.title
+            && layer.height > REPORT_TITLE_BAND + 40.0
+        {
+            TextSink {
+                pixmap: &mut pixmap,
+                font: &font,
+                scale,
+            }
+            .text(
+                title,
+                13.0,
+                layer.x * scale,
+                layer.y * scale,
+                &ink,
+                Anchor::Left,
+            );
+            content_y += REPORT_TITLE_BAND;
+            content_height -= REPORT_TITLE_BAND;
+        }
+
+        if let Some(scene) = layer.scene {
+            let sub = rasterize(scene, scale);
+            pixmap.draw_pixmap(
+                (layer.x * scale) as i32,
+                (content_y * scale) as i32,
+                sub.as_ref(),
+                &PixmapPaint {
+                    opacity: 1.0,
+                    blend_mode: BlendMode::SourceOver,
+                    quality: FilterQuality::Bilinear,
+                },
+                Transform::identity(),
+                None,
+            );
+        }
+
+        if let Some(text) = layer.text {
+            TextSink {
+                pixmap: &mut pixmap,
+                font: &font,
+                scale,
+            }
+            .text_block(text, layer.x, content_y, content_height, &ink);
+        }
+
+        if layer.border
+            && let Some(rect) = rect
+        {
+            let mut path = PathBuilder::new();
+            path.move_to(rect.left(), rect.top());
+            path.line_to(rect.right(), rect.top());
+            path.line_to(rect.right(), rect.bottom());
+            path.line_to(rect.left(), rect.bottom());
+            path.close();
+            if let Some(path) = path.finish() {
+                pixmap.stroke_path(
+                    &path,
+                    &solid([0.0, 0.0, 0.0, 0.16]),
+                    &Stroke {
+                        width: scale.max(1.0),
+                        ..Stroke::default()
+                    },
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+    }
+
+    if watermark {
+        let size = 12.0;
+        let padding = 8.0 * scale;
+        TextSink {
+            pixmap: &mut pixmap,
+            font: &font,
+            scale,
+        }
+        .text(
+            "SlickBI preview",
+            size,
+            width as f32 - padding,
+            height as f32 - padding - size * scale,
+            &[0.20, 0.24, 0.30, 0.35],
+            Anchor::Right,
+        );
+    }
+
+    encode_png(&pixmap)
+}
+
 /// Renders a scene to a standalone SVG document.
 ///
 /// SVG is vector, so this is resolution-independent: the document carries the scene's point
@@ -738,8 +891,36 @@ impl Canvas {
         color: &[f32; 4],
         anchor: Anchor,
     ) -> f32 {
+        TextSink {
+            pixmap: &mut self.pixmap,
+            font: &self.font,
+            scale: self.scale,
+        }
+        .text(text, size, x, y, color, anchor)
+    }
+}
+
+/// A pixmap, font and device scale, so text can be drawn onto a plain pixmap (a report) or a
+/// scene canvas with the same code.
+struct TextSink<'a> {
+    pixmap: &'a mut Pixmap,
+    font: &'a FontArc,
+    scale: f32,
+}
+
+impl TextSink<'_> {
+    /// Draws one line and returns its advance width, in pixels.
+    fn text(
+        &mut self,
+        text: &str,
+        size: f32,
+        x: f32,
+        y: f32,
+        color: &[f32; 4],
+        anchor: Anchor,
+    ) -> f32 {
         let px = size * self.scale;
-        let scale = PxScale::from(px);
+        let px_scale = PxScale::from(px);
         let factor = px / self.font.height_unscaled();
 
         let mut glyphs = Vec::new();
@@ -752,7 +933,7 @@ impl Canvas {
             }
             glyphs.push(Glyph {
                 id,
-                scale,
+                scale: px_scale,
                 position: ab_glyph::point(pen, 0.0),
             });
             pen += self.font.h_advance_unscaled(id) * factor;
@@ -776,11 +957,11 @@ impl Canvas {
             let bounds = outlined.px_bounds();
             let gx = start + pen_x + bounds.min.x;
             let gy = baseline + bounds.min.y;
-            if let Some(pixmap) = glyph_pixmap(&outlined, *color) {
+            if let Some(glyph_pixmap) = glyph_pixmap(&outlined, *color) {
                 self.pixmap.draw_pixmap(
                     gx as i32,
                     gy as i32,
-                    pixmap.as_ref(),
+                    glyph_pixmap.as_ref(),
                     &PixmapPaint {
                         opacity: 1.0,
                         blend_mode: BlendMode::SourceOver,
@@ -792,6 +973,35 @@ impl Canvas {
             }
         }
         width
+    }
+
+    /// Draws markdown lines, stopping at the block's bottom.
+    fn text_block(&mut self, markdown: &str, x: f32, y: f32, height: f32, ink: &[f32; 4]) {
+        let mut cursor = y;
+        let bottom = y + height;
+        for line in markdown.lines() {
+            let (text, size) = if let Some(rest) = line.strip_prefix("# ") {
+                (rest, 20.0)
+            } else if let Some(rest) = line.strip_prefix("## ") {
+                (rest, 16.0)
+            } else {
+                (line, 13.0)
+            };
+            if !text.is_empty() {
+                self.text(
+                    text,
+                    size,
+                    x * self.scale,
+                    cursor * self.scale,
+                    ink,
+                    Anchor::Left,
+                );
+            }
+            cursor += size + 6.0;
+            if cursor > bottom {
+                break;
+            }
+        }
     }
 }
 

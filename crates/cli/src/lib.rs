@@ -14,7 +14,7 @@ pub use slickbi_entitlement::{Entitlement, EntitlementError, Feature, Plan};
 use slickbi_model::Model;
 use slickbi_planner::{PlanOptions, plan};
 use slickbi_scene::Scene;
-use slickbi_spec::Workbook;
+use slickbi_spec::{ChartElement, Workbook, Worksheet};
 use slickbi_workbook::Scz;
 use thiserror::Error;
 
@@ -209,28 +209,231 @@ fn load_scene(path: &Path, worksheet: &str, size: (f32, f32)) -> Result<Scene, C
     let scz = Scz::open(path)?;
     let workbook = scz.workbook();
     let worksheet = find_worksheet(workbook, worksheet)?;
-    let mark = worksheet.mark;
-
     let model = model_for(workbook, worksheet)?;
     ensure_extracts(&scz, &model)?;
 
     let engine = Engine::open()?;
     let temp_files = register_extracts(&engine, &scz)?;
-    let query = plan(&model, worksheet, &PlanOptions::default())?;
-    let result = engine.execute(&query.sql, &query.params)?;
+    let scene = scene_for(
+        &engine,
+        workbook,
+        worksheet,
+        size,
+        slickbi_scene::SceneOptions::default(),
+    );
     for path in temp_files {
         std::fs::remove_file(path).ok();
     }
+    scene
+}
 
+/// Plans, executes and builds a scene for a worksheet against an already-open engine.
+fn scene_for(
+    engine: &Engine,
+    workbook: &Workbook,
+    worksheet: &Worksheet,
+    size: (f32, f32),
+    options: slickbi_scene::SceneOptions,
+) -> Result<Scene, CliError> {
+    let model = model_for(workbook, worksheet)?;
+    let query = plan(&model, worksheet, &PlanOptions::default())?;
+    let result = engine.execute(&query.sql, &query.params)?;
     let spec = slickbi_scene::SceneSpec {
-        mark,
+        mark: worksheet.mark,
         columns: &query.columns,
         batches: &result.batches,
         size,
         margins: slickbi_scene::Margins::default(),
-        options: slickbi_scene::SceneOptions::default(),
+        options,
     };
     Ok(slickbi_scene::build(&spec)?)
+}
+
+/// Renders a report to the free, watermarked PNG preview.
+///
+/// Chart elements are rebuilt from their worksheets at the element's size, with the report's
+/// presentation overrides applied; text elements are drawn line by line. The document header is
+/// part of the report name, not the canvas.
+///
+/// # Errors
+///
+/// Returns [`CliError::ReportNotFound`] when the report is missing, and the same errors as
+/// [`query`] plus scene and rendering failures for each chart element.
+pub fn render_report_preview(
+    path: &Path,
+    report: &str,
+    out: &Path,
+    scale: f32,
+) -> Result<(), CliError> {
+    let scz = Scz::open(path)?;
+    let workbook = scz.workbook();
+    let report = workbook
+        .reports
+        .iter()
+        .find(|candidate| candidate.id.as_str() == report || candidate.name == report)
+        .ok_or_else(|| CliError::ReportNotFound(report.to_owned()))?;
+
+    let engine = Engine::open()?;
+    let temp_files = register_extracts(&engine, &scz)?;
+
+    // Build every chart scene first, so the layers can borrow them without the vector moving.
+    let mut scenes: Vec<Option<Scene>> = Vec::with_capacity(report.elements.len());
+    for element in &report.elements {
+        match &element.kind {
+            slickbi_spec::ElementKind::Chart { chart } => {
+                let Some(worksheet) = workbook
+                    .worksheets
+                    .iter()
+                    .find(|worksheet| worksheet.id == chart.worksheet)
+                else {
+                    scenes.push(None);
+                    continue;
+                };
+                let model = model_for(workbook, worksheet)?;
+                ensure_extracts(&scz, &model)?;
+                let layout = chart_layout(element, chart, worksheet);
+                let options = slickbi_scene::SceneOptions {
+                    show_axes: chart.overrides.show_axes.unwrap_or(true),
+                    show_legend: chart.overrides.show_legend.unwrap_or(true),
+                };
+                scenes.push(Some(scene_for(
+                    &engine,
+                    workbook,
+                    worksheet,
+                    (layout.chart_width.max(1.0), layout.chart_height.max(1.0)),
+                    options,
+                )?));
+            }
+            slickbi_spec::ElementKind::Text { .. } => scenes.push(None),
+        }
+    }
+
+    // Titles own their strings, so the layers can borrow them for the render call.
+    let titles: Vec<Option<String>> = report
+        .elements
+        .iter()
+        .map(|element| match &element.kind {
+            slickbi_spec::ElementKind::Chart { chart } => workbook
+                .worksheets
+                .iter()
+                .find(|worksheet| worksheet.id == chart.worksheet)
+                .and_then(|worksheet| chart_layout(element, chart, worksheet).title),
+            _ => None,
+        })
+        .collect();
+
+    let mut layers = Vec::with_capacity(report.elements.len());
+    for (index, element) in report.elements.iter().enumerate() {
+        match &element.kind {
+            slickbi_spec::ElementKind::Chart { chart } => {
+                let worksheet = workbook
+                    .worksheets
+                    .iter()
+                    .find(|worksheet| worksheet.id == chart.worksheet);
+                let layout = worksheet.map(|worksheet| chart_layout(element, chart, worksheet));
+                let (x, y, width, height) = layout
+                    .map(|layout| (layout.x, layout.y, layout.width, layout.height))
+                    .unwrap_or((
+                        element.frame.x as f32,
+                        element.frame.y as f32,
+                        element.frame.width as f32,
+                        element.frame.height as f32,
+                    ));
+                layers.push(slickbi_render::ReportLayer {
+                    x,
+                    y,
+                    width,
+                    height,
+                    scene: scenes[index].as_ref(),
+                    text: None,
+                    title: titles[index].as_deref(),
+                    border: chart.overrides.border == Some(true),
+                    background: None,
+                });
+            }
+            slickbi_spec::ElementKind::Text { text } => {
+                layers.push(slickbi_render::ReportLayer {
+                    x: element.frame.x as f32,
+                    y: element.frame.y as f32,
+                    width: element.frame.width as f32,
+                    height: element.frame.height as f32,
+                    scene: None,
+                    text: Some(&text.markdown),
+                    title: None,
+                    border: false,
+                    background: None,
+                });
+            }
+        }
+    }
+
+    let (background, ink) = report_colors(report.theme.as_deref());
+    let png = slickbi_render::render_report_png(
+        (report.canvas.width as f32, report.canvas.height as f32),
+        scale,
+        background,
+        ink,
+        &layers,
+        true,
+    )?;
+    std::fs::write(out, png)?;
+    for path in temp_files {
+        std::fs::remove_file(path).ok();
+    }
+    Ok(())
+}
+
+/// The drawing rectangle of a chart element after padding and its title band.
+struct ChartLayout {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    chart_width: f32,
+    chart_height: f32,
+    title: Option<String>,
+}
+
+/// Applies an element's padding and title band, mirroring what the compositor will draw.
+fn chart_layout(
+    element: &slickbi_spec::Element,
+    chart: &ChartElement,
+    worksheet: &Worksheet,
+) -> ChartLayout {
+    let padding = chart.overrides.padding.unwrap_or(0.0) as f32;
+    let x = element.frame.x as f32 + padding;
+    let y = element.frame.y as f32 + padding;
+    let width = (element.frame.width as f32 - padding * 2.0).max(1.0);
+    let height = (element.frame.height as f32 - padding * 2.0).max(1.0);
+
+    let show_title = chart.overrides.show_title.unwrap_or(true);
+    let title = chart.title.clone().or_else(|| Some(worksheet.name.clone()));
+    let has_title =
+        show_title && title.is_some() && height > slickbi_render::REPORT_TITLE_BAND + 40.0;
+    let chart_height = if has_title {
+        height - slickbi_render::REPORT_TITLE_BAND
+    } else {
+        height
+    };
+
+    ChartLayout {
+        x,
+        y,
+        width,
+        height,
+        chart_width: width,
+        chart_height,
+        title: if has_title { title } else { None },
+    }
+}
+
+/// The background and ink colours for a report theme.
+fn report_colors(theme: Option<&str>) -> ([f32; 4], [f32; 4]) {
+    match theme {
+        Some("slate") => ([0.106, 0.122, 0.141, 1.0], [0.925, 0.937, 0.949, 1.0]),
+        Some("warm") => ([0.984, 0.969, 0.941, 1.0], [0.169, 0.149, 0.133, 1.0]),
+        _ => ([1.0, 1.0, 1.0, 1.0], [0.141, 0.173, 0.212, 1.0]),
+    }
 }
 
 fn find_worksheet<'a>(
@@ -380,6 +583,9 @@ pub enum CliError {
     /// No worksheet has that id or name.
     #[error("no worksheet named '{0}'")]
     WorksheetNotFound(String),
+    /// No report has that id or name.
+    #[error("no report named '{0}'")]
+    ReportNotFound(String),
     /// A worksheet's model does not exist in the workbook.
     #[error("worksheet refers to model '{0}', which is not in the workbook")]
     ModelNotFound(String),

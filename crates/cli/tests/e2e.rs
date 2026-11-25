@@ -9,16 +9,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use slickbi_calc::ParamValue;
 use slickbi_cli::{
     Entitlement, EntitlementError, Feature, OutputFormat, compile, inspect, query, render_preview,
-    render_print, render_svg, validate,
+    render_print, render_report_preview, render_svg, validate,
 };
 use slickbi_engine::arrow::array::{Array, Float64Array, StringArray};
 use slickbi_engine::{Engine, SourceFormat};
 use slickbi_model::Model;
 use slickbi_planner::{PlanOptions, plan};
 use slickbi_spec::{
-    Agg, Channel, Column, ColumnId, DataModel, DataModelId, DataType, Encoding, Field, FieldId,
-    FieldSource, Mark, Role, SortKey, Table, TableId, Workbook, WorkbookId, WorkbookMeta,
-    Worksheet,
+    Agg, Canvas, Channel, ChartElement, Column, ColumnId, DataModel, DataModelId, DataType,
+    Element, ElementId, ElementKind, Encoding, Field, FieldId, FieldSource, Mark, Overrides, Rect,
+    Report, ReportId, ReportTarget, Role, SortKey, Table, TableId, TextAlign, TextElement,
+    Workbook, WorkbookId, WorkbookMeta, Worksheet,
 };
 use slickbi_workbook::Scz;
 
@@ -119,6 +120,47 @@ fn sales_workbook() -> Workbook {
     let mut workbook = Workbook::new(WorkbookId::new("w1"), WorkbookMeta::new("Sales"));
     workbook.models = vec![model];
     workbook.worksheets = vec![worksheet];
+    workbook.reports = vec![Report {
+        id: ReportId::new("board"),
+        name: "Board".into(),
+        target: ReportTarget::Screen,
+        theme: None,
+        canvas: Canvas::standard(),
+        elements: vec![
+            Element {
+                id: ElementId::new("e1"),
+                frame: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 640.0,
+                    height: 300.0,
+                },
+                kind: ElementKind::Chart {
+                    chart: ChartElement {
+                        worksheet: slickbi_spec::WorksheetId::new("bar"),
+                        title: None,
+                        overrides: Overrides::default(),
+                    },
+                },
+            },
+            Element {
+                id: ElementId::new("e2"),
+                frame: Rect {
+                    x: 0.0,
+                    y: 310.0,
+                    width: 640.0,
+                    height: 80.0,
+                },
+                kind: ElementKind::Text {
+                    text: TextElement {
+                        markdown: "# Notes".into(),
+                        align: TextAlign::Left,
+                        style: None,
+                    },
+                },
+            },
+        ],
+    }];
     workbook
 }
 
@@ -224,6 +266,27 @@ fn render_preview_writes_a_png() {
     assert!(
         bytes.len() > 1000,
         "a chart PNG should be more than a header"
+    );
+    assert_eq!(
+        &bytes[..8],
+        &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
+    );
+    std::fs::remove_file(&out).ok();
+}
+
+#[test]
+fn render_report_writes_a_png() {
+    let path = fixture();
+    let out = std::env::temp_dir().join(format!(
+        "slickbi-report-{}-{}.png",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    render_report_preview(&path, "Board", &out, 1.0).expect("renders a report");
+    let bytes = std::fs::read(&out).expect("reads");
+    assert!(
+        bytes.len() > 1000,
+        "a report PNG should be more than a header"
     );
     assert_eq!(
         &bytes[..8],

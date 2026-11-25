@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use slickbi_cli::{
-    OutputFormat, compile, inspect, query, render_preview, render_print, render_svg, schema,
-    validate,
+    OutputFormat, compile, inspect, query, render_preview, render_print, render_report_preview,
+    render_svg, schema, validate,
 };
 use slickbi_entitlement::Entitlement;
 
@@ -96,6 +96,20 @@ fn run(args: &[String]) -> Result<String, slickbi_cli::CliError> {
             }
             Ok(format!("wrote {}\n", out.display()))
         }
+        "render-report" => {
+            let path = path_arg(args)?;
+            let Some(report) = flag(args, "--report") else {
+                return Err(usage_error("render-report needs --report <id|name>"));
+            };
+            let out = flag(args, "--out")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("report.png"));
+            let scale = flag(args, "--scale")
+                .map(|v| v.parse().unwrap_or(1.0))
+                .unwrap_or(1.0);
+            render_report_preview(&path, report, &out, scale)?;
+            Ok(format!("wrote {}\n", out.display()))
+        }
         _ => Err(usage_error(&format!("unknown command '{command}'"))),
     }
 }
@@ -136,6 +150,7 @@ Usage:
   slickbi-cli query    FILE.scz --worksheet <id|name> [--format table|csv]
   slickbi-cli render   FILE.scz --worksheet <id|name> --out chart.png [--width 800 --height 600]
                        [--print (Pro) --scale 2] [--svg (Pro)]
+  slickbi-cli render-report FILE.scz --report <id|name> --out report.png [--scale 1]
 "
     .to_owned()
 }
