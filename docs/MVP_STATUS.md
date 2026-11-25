@@ -140,7 +140,7 @@ At the snapshot, of the **51 MVP-scope features**: **44 done, 1 partial, 6 not s
 | 15 | Save/quit/reopen identical | **Met** | round-trip tests |
 | 16 | 0.0.2 workbook opens via migration | **Partial** | No migration path/fixture (single format version) |
 | 17 | CSV export byte-identical to DuckDB writer | **Not met** | Hand-rolled CSV in app and CLI (quoting/format can differ) |
-| 18 | `slickbi-cli render` report == on-screen within tolerance | **Partial** | CLI renders worksheets only; no image-diff harness |
+| 18 | `slickbi-cli render` report == on-screen within tolerance | **Partial** | `render-report` composes the canvas to PNG; no image-diff harness yet |
 | 19 | 8 h soak, < 10 % memory growth | **Not met** | No soak test |
 | 20 | JSON Schema validates app output, zero errors | **Met** | `jsonschema` validates the serialised workbook; schema file cannot drift |
 
