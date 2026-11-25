@@ -1287,6 +1287,21 @@ impl SlickBiApp {
         // frame coordinates map directly onto the canvas with nothing hidden underneath.
         ui.add_space(4.0);
         ui.label(egui::RichText::new(&report.name).heading());
+        let report_index = self.session.active_report();
+        if let Some(cross) = self
+            .session
+            .cross_filter()
+            .filter(|cross| cross.report == report_index)
+            .cloned()
+        {
+            ui.add_space(2.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("Filtered by {}", cross.label)).small());
+                if ui.small_button("Clear").clicked() {
+                    self.session.clear_cross_filter();
+                }
+            });
+        }
         ui.add_space(6.0);
 
         let available = ui.available_size();
@@ -1301,7 +1316,6 @@ impl SlickBiApp {
         let (background, ink) = theme_colors(report.theme.as_deref());
         painter.rect_filled(canvas_rect, 8.0, background);
 
-        let report_index = self.session.active_report();
         let mut remove = None;
         let mut jump = None;
 
@@ -1320,16 +1334,17 @@ impl SlickBiApp {
 
             match &element.kind {
                 slickbi_spec::ElementKind::Chart { chart } => {
-                    // Clicking a chart opens its source worksheet (T06).
-                    let response = ui.interact(
-                        rect,
-                        egui::Id::unique(("report-jump", element.id.as_str())),
-                        egui::Sense::click(),
-                    );
-                    if response.clicked() {
-                        jump = Some(chart.worksheet.clone());
-                    }
-                    response.on_hover_text("Open the source worksheet");
+                    // A click on a mark cross-filters the report; a click on the title band opens
+                    // the source worksheet (T06). The plot is always the part below the title.
+                    let response = ui
+                        .interact(
+                            rect,
+                            egui::Id::unique(("report-element", element.id.as_str())),
+                            egui::Sense::click(),
+                        )
+                        .on_hover_text(
+                            "Click a mark to filter the report; click the title to open the worksheet",
+                        );
                     // The element title: the override, else the worksheet name, unless hidden.
                     let show_title = chart.overrides.show_title.unwrap_or(true);
                     let mut chart_rect = rect;
@@ -1381,9 +1396,38 @@ impl SlickBiApp {
                     };
                     match self
                         .session
-                        .scene_for_with(&chart.worksheet, scaled, options)
+                        .scene_for_element(report_index, index, scaled, options)
                     {
-                        Ok(Some(scene)) => draw_scene_in(ui, &scene, chart_rect),
+                        Ok(Some(scene)) => {
+                            draw_scene_in(ui, &scene, chart_rect);
+                            if response.clicked()
+                                && let Some(pointer) = response.interact_pointer_pos()
+                            {
+                                if pointer.y < chart_rect.min.y {
+                                    jump = Some(chart.worksheet.clone());
+                                } else {
+                                    let local_x = pointer.x - chart_rect.min.x;
+                                    let local_y = pointer.y - chart_rect.min.y;
+                                    match self.session.cross_filter_target(
+                                        &chart.worksheet,
+                                        &scene,
+                                        local_x,
+                                        local_y,
+                                    ) {
+                                        Some((field, value, label)) => {
+                                            self.session.set_cross_filter(
+                                                report_index,
+                                                element.id.clone(),
+                                                field,
+                                                value,
+                                                label,
+                                            );
+                                        }
+                                        None => self.session.clear_cross_filter(),
+                                    }
+                                }
+                            }
+                        }
                         Ok(None) => placeholder("No shelves yet"),
                         Err(_) => placeholder("Worksheet missing"),
                     }

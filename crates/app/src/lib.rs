@@ -15,9 +15,9 @@ use slickbi_model::Model;
 use slickbi_planner::{PlanOptions, plan};
 use slickbi_scene::{Margins, Scene, SceneOptions, SceneSpec, build};
 use slickbi_spec::{
-    Agg, Channel, Connection, ConnectionId, DataModelId, DataType, Field, FieldFormat, FieldId,
-    FieldSource, Filter, FilterOp, Mark, ParamId, Parameter, Report, Role, Scalar, SortKey,
-    Workbook, Worksheet, WorksheetId,
+    Agg, Channel, Connection, ConnectionId, DataModelId, DataType, ElementId, Field, FieldFormat,
+    FieldId, FieldSource, Filter, FilterOp, Mark, ParamId, Parameter, Report, Role, Scalar,
+    SortKey, Workbook, Worksheet, WorksheetId,
 };
 use slickbi_workbook::Scz;
 use thiserror::Error;
@@ -70,12 +70,28 @@ struct LiveConnection {
     model: DataModelId,
 }
 
+/// A selection in one report chart that filters the report's other charts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CrossFilter {
+    /// The report the selection belongs to.
+    pub report: usize,
+    /// The element the click came from; it is not filtered by its own selection.
+    pub source: ElementId,
+    /// The field the selected mark was grouped by.
+    pub field: FieldId,
+    /// The selected value.
+    pub value: Scalar,
+    /// A label for the banner.
+    pub label: String,
+}
+
 /// The application state.
 pub struct Session {
     engine: Engine,
     workbook: Workbook,
     source: Option<(PathBuf, SourceFormat)>,
     live: Option<LiveConnection>,
+    cross_filter: Option<CrossFilter>,
     active: usize,
     active_report: usize,
     scene: Option<Scene>,
@@ -101,6 +117,7 @@ impl Session {
             ),
             source: None,
             live: None,
+            cross_filter: None,
             active: 0,
             active_report: 0,
             scene: None,
@@ -265,6 +282,7 @@ impl Session {
         self.active = self.workbook.worksheets.len() - 1;
         self.source = Some((path.to_owned(), format));
         self.live = None;
+        self.cross_filter = None;
         self.refresh();
         Ok(())
     }
@@ -341,6 +359,7 @@ impl Session {
         self.active = self.workbook.worksheets.len() - 1;
         self.source = None;
         self.live = None;
+        self.cross_filter = None;
         self.refresh();
         Ok(())
     }
@@ -423,6 +442,7 @@ impl Session {
             source,
             model: DataModelId::new("m1"),
         });
+        self.cross_filter = None;
         self.refresh();
         Ok(())
     }
@@ -1233,6 +1253,7 @@ impl Session {
     pub fn set_active_report(&mut self, index: usize) {
         if index < self.workbook.reports.len() {
             self.active_report = index;
+            self.cross_filter = None;
         }
     }
 
@@ -1556,6 +1577,15 @@ impl Session {
         else {
             return Err("the worksheet is missing".to_owned());
         };
+        self.scene_for_worksheet(&worksheet, size, options)
+    }
+
+    fn scene_for_worksheet(
+        &mut self,
+        worksheet: &Worksheet,
+        size: (f32, f32),
+        options: SceneOptions,
+    ) -> Result<Option<Scene>, String> {
         // A KPI tile or a table needs no x or y shelf; every other mark does.
         if !matches!(worksheet.mark, Mark::Text | Mark::Table)
             && (worksheet.encoding.x.is_none() || worksheet.encoding.y.is_none())
@@ -1590,14 +1620,14 @@ impl Session {
             None => Model::resolve_with(document, &self.workbook.parameters),
         }
         .map_err(|e| e.to_string())?;
-        let query = plan(&model, &worksheet, &self.plan_options()).map_err(|e| e.to_string())?;
+        let query = plan(&model, worksheet, &self.plan_options()).map_err(|e| e.to_string())?;
         let result = match self
             .live
             .as_ref()
             .filter(|live| live.model == worksheet.model)
         {
             Some(live) => {
-                if let Some(refusal) = live_refusal(document, &worksheet, live.source.kind) {
+                if let Some(refusal) = live_refusal(document, worksheet, live.source.kind) {
                     return Err(refusal.to_string());
                 }
                 let columns: Vec<(String, DataType)> = query
@@ -1623,6 +1653,145 @@ impl Session {
             options,
         };
         build(&spec).map(Some).map_err(|e| e.to_string())
+    }
+
+    /// Builds a report chart's scene with any active cross-filter applied.
+    ///
+    /// The element the selection came from keeps its own scene so the chosen mark stays visible;
+    /// every other chart that has the selected field is planned with an equality filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns the missing element or worksheet, or the plan/scene error.
+    pub fn scene_for_element(
+        &mut self,
+        report: usize,
+        index: usize,
+        size: (f32, f32),
+        options: SceneOptions,
+    ) -> Result<Option<Scene>, String> {
+        let Some(element) = self
+            .workbook
+            .reports
+            .get(report)
+            .and_then(|report| report.elements.get(index))
+            .cloned()
+        else {
+            return Err("the report element is missing".to_owned());
+        };
+        let slickbi_spec::ElementKind::Chart { chart } = &element.kind else {
+            return Ok(None);
+        };
+        let Some(mut worksheet) = self
+            .workbook
+            .worksheets
+            .iter()
+            .find(|worksheet| worksheet.id == chart.worksheet)
+            .cloned()
+        else {
+            return Err("the element's worksheet is missing".to_owned());
+        };
+
+        if let Some(cross) = &self.cross_filter
+            && cross.report == report
+            && cross.source != element.id
+            && self
+                .workbook
+                .models
+                .iter()
+                .find(|model| model.id == worksheet.model)
+                .is_some_and(|model| model.fields.iter().any(|field| field.id == cross.field))
+        {
+            worksheet.filters.push(Filter {
+                field: cross.field.clone(),
+                op: FilterOp::Equal,
+                values: vec![cross.value.clone()],
+                parameter: None,
+            });
+        }
+        self.scene_for_worksheet(&worksheet, size, options)
+    }
+
+    /// The active cross-filter, if any.
+    pub fn cross_filter(&self) -> Option<&CrossFilter> {
+        self.cross_filter.as_ref()
+    }
+
+    /// Selects a mark in a report chart, filtering the other charts in the report.
+    pub fn set_cross_filter(
+        &mut self,
+        report: usize,
+        source: ElementId,
+        field: FieldId,
+        value: Scalar,
+        label: String,
+    ) {
+        self.cross_filter = Some(CrossFilter {
+            report,
+            source,
+            field,
+            value,
+            label,
+        });
+    }
+
+    /// The field and value a click on a mark selects, with a label for the banner.
+    ///
+    /// The first tooltip line is the mark's category; the shelf that holds a dimension names the
+    /// field. A click that is not on a mark returns `None`, which clears the selection.
+    pub fn cross_filter_target(
+        &self,
+        worksheet_id: &WorksheetId,
+        scene: &Scene,
+        x: f32,
+        y: f32,
+    ) -> Option<(FieldId, Scalar, String)> {
+        let mark = scene.tooltips.iter().min_by(|a, b| {
+            let distance = |mark: &slickbi_scene::TooltipMark| {
+                ((mark.x - x).powi(2) + (mark.y - y).powi(2)).sqrt()
+            };
+            distance(a).total_cmp(&distance(b))
+        })?;
+        let distance = ((mark.x - x).powi(2) + (mark.y - y).powi(2)).sqrt();
+        if distance > mark.radius.max(8.0) {
+            return None;
+        }
+        let category = mark.text.lines().next()?.split_once(": ")?.1.to_owned();
+        let worksheet = self
+            .workbook
+            .worksheets
+            .iter()
+            .find(|worksheet| &worksheet.id == worksheet_id)?;
+        let model = self
+            .workbook
+            .models
+            .iter()
+            .find(|model| model.id == worksheet.model)?;
+        let channel = [worksheet.encoding.x.as_ref(), worksheet.encoding.y.as_ref()]
+            .into_iter()
+            .flatten()
+            .find(|channel| {
+                model
+                    .fields
+                    .iter()
+                    .find(|field| field.id == channel.field)
+                    .is_some_and(|field| field.role == Role::Dimension)
+            })?;
+        let field = model
+            .fields
+            .iter()
+            .find(|field| field.id == channel.field)?;
+        let value = scalar_from_label(&category, field.data_type)?;
+        Some((
+            field.id.clone(),
+            value,
+            format!("{} = {}", field.name, category),
+        ))
+    }
+
+    /// Clears the active cross-filter.
+    pub fn clear_cross_filter(&mut self) {
+        self.cross_filter = None;
     }
 
     /// Rebuilds the scene for the active worksheet at the given panel size.
@@ -1683,6 +1852,7 @@ impl Session {
         self.active = 0;
         self.source = None;
         self.live = None;
+        self.cross_filter = None;
         self.refresh();
         Ok(())
     }
@@ -1692,6 +1862,37 @@ impl Drop for Session {
     fn drop(&mut self) {
         for path in &self.temp_files {
             std::fs::remove_file(path).ok();
+        }
+    }
+}
+
+/// Reads a formatted axis category back into a filter value.
+fn scalar_from_label(label: &str, data_type: DataType) -> Option<Scalar> {
+    let text = label.trim();
+    match data_type {
+        DataType::Integer => {
+            let cleaned: String = text
+                .chars()
+                .filter(|character| character.is_ascii_digit() || *character == '-')
+                .collect();
+            cleaned.parse::<i64>().ok().map(Scalar::Integer)
+        }
+        DataType::Number => {
+            let cleaned: String = text
+                .chars()
+                .filter(|character| {
+                    character.is_ascii_digit() || *character == '-' || *character == '.'
+                })
+                .collect();
+            cleaned.parse::<f64>().ok().map(Scalar::Number)
+        }
+        DataType::Boolean => match text.to_ascii_lowercase().as_str() {
+            "true" | "1" => Some(Scalar::Boolean(true)),
+            "false" | "0" => Some(Scalar::Boolean(false)),
+            _ => None,
+        },
+        DataType::Text | DataType::Date | DataType::Timestamp | DataType::Unknown => {
+            Some(Scalar::Text(text.to_owned()))
         }
     }
 }
@@ -2675,6 +2876,91 @@ mod tests {
             texts.iter().any(|text| text.starts_with('$')),
             "the currency format reached the axis: {texts:?}"
         );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_click_on_a_mark_names_the_category_and_value() {
+        let (mut session, path) = loaded();
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        let worksheet = session.active_worksheet().expect("worksheet").id.clone();
+        let scene = session
+            .scene_for(&worksheet, (400.0, 300.0))
+            .expect("scene")
+            .expect("some");
+
+        let mark = scene
+            .tooltips
+            .iter()
+            .find(|mark| mark.text.contains("EMEA"))
+            .expect("an EMEA mark");
+        let (field, value, label) = session
+            .cross_filter_target(&worksheet, &scene, mark.x, mark.y)
+            .expect("a target");
+        assert_eq!(field, FieldId::new("region"));
+        assert_eq!(value, Scalar::Text("EMEA".into()));
+        assert!(label.contains("EMEA"), "label: {label}");
+
+        assert!(
+            session
+                .cross_filter_target(&worksheet, &scene, 0.0, 0.0)
+                .is_none(),
+            "a click away from every mark is not a selection"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_cross_filter_filters_the_other_report_element() {
+        let (mut session, path) = loaded();
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        let first = session.active_worksheet().expect("worksheet").id.clone();
+        session.add_worksheet();
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        let second = session.active_worksheet().expect("worksheet").id.clone();
+
+        session.add_report("Board");
+        session.add_chart_to_report(&first);
+        session.add_chart_to_report(&second);
+        let source = session.active_report_doc().expect("report").elements[0]
+            .id
+            .clone();
+
+        let bars = |session: &mut Session, index: usize| -> usize {
+            let scene = session
+                .scene_for_element(0, index, (400.0, 300.0), SceneOptions::default())
+                .expect("scene")
+                .expect("some");
+            match &scene.series[0].kind {
+                slickbi_scene::SeriesKind::Bars(bars) => bars.len(),
+                _ => 0,
+            }
+        };
+        assert_eq!(bars(&mut session, 1), 2, "both regions before a selection");
+
+        session.set_cross_filter(
+            0,
+            source,
+            FieldId::new("region"),
+            Scalar::Text("EMEA".into()),
+            "region = EMEA".to_owned(),
+        );
+        assert_eq!(
+            bars(&mut session, 0),
+            2,
+            "the source element keeps its own marks"
+        );
+        assert_eq!(
+            bars(&mut session, 1),
+            1,
+            "the other element is filtered to EMEA"
+        );
+
+        session.clear_cross_filter();
+        assert_eq!(bars(&mut session, 1), 2, "clearing restores it");
         std::fs::remove_file(&path).ok();
     }
 

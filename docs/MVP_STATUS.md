@@ -30,7 +30,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **51 MVP-scope features**: **49 done, 0 partial, 2 not started**.
+At the snapshot, of the **51 MVP-scope features**: **50 done, 0 partial, 1 not started**.
 
 ---
 
@@ -102,7 +102,7 @@ At the snapshot, of the **51 MVP-scope features**: **49 done, 0 partial, 2 not s
 | R03 | Move, resize, reorder elements | **Done** | `caa7a17`, clamped + tested | — |
 | R04 | Text / markdown elements | **Done** | text blocks | — |
 | R05 | Per-element presentation overrides | **Done** | title/legend/axes/padding/border (`d8fa9b3`) | — |
-| R06 | Cross-filtering between elements | **Not started** | **MVP-13 depends on this**; needs a hit index + filter state + predicate plumbing | L |
+| R06 | Cross-filtering between elements | **Done** | Clicking a mark filters the report's other charts; the title opens the worksheet; empty space or Clear restores | — |
 
 ### Data out, automation, format, platform
 
@@ -135,7 +135,7 @@ At the snapshot, of the **51 MVP-scope features**: **49 done, 0 partial, 2 not s
 | 10 | Delete used worksheet → placeholders, warns, names reports | **Met** | T05 fix + test |
 | 11 | Worksheet filter change updates open report | **Met** | report rebuilds from worksheet each frame |
 | 12 | Element title override affects only that report | **Met** | R05 + rendering |
-| 13 | Click bar → other charts cross-filter; empty clears | **Not met** | R06 missing |
+| 13 | Click bar → other charts cross-filter; empty clears | **Met** | R06: mark hit test, transient report selection, predicate on the other elements |
 | 14 | Report reflows 1400→900 with no overlap/clip | **Partial** | Canvas scales; no overflow clip now, but reflow/determinism not tested at 900 px |
 | 15 | Save/quit/reopen identical | **Met** | round-trip tests |
 | 16 | 0.0.2 workbook opens via migration | **Partial** | No migration path/fixture (single format version) |
@@ -144,7 +144,7 @@ At the snapshot, of the **51 MVP-scope features**: **49 done, 0 partial, 2 not s
 | 19 | 8 h soak, < 10 % memory growth | **Not met** | No soak test |
 | 20 | JSON Schema validates app output, zero errors | **Met** | `jsonschema` validates the serialised workbook; schema file cannot drift |
 
-Counts: **Met 11 · Partial 5 · Not met 4.**
+Counts: **Met 12 · Partial 4 · Not met 4.**
 
 ---
 
@@ -204,8 +204,7 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [x] **M03 remainder** — type override; date formatting and date dimensions. **M**
 
 ### Phase 4 — reports and testing seams
-- [ ] **R06 cross-filtering** — hit index, cross-filter state, predicate per element. Unblocks
-      **MVP-13**. **L**
+- [x] **R06 cross-filtering** — mark hit test, transient selection, predicate per element. **L**
 - [x] **A02 report render in the CLI** — `slickbi-cli render-report` composes a report to PNG. **M**
 - [ ] **Image-diff harness** between the on-screen renderer and the export renderer + a
       deterministic reflow test at 1400/900 px. Unblocks **MVP-14** and **MVP-18**. **M**
