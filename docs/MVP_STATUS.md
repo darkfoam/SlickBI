@@ -30,7 +30,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **51 MVP-scope features**: **44 done, 1 partial, 6 not started**.
+At the snapshot, of the **51 MVP-scope features**: **45 done, 1 partial, 5 not started**.
 
 ---
 
@@ -57,7 +57,7 @@ At the snapshot, of the **51 MVP-scope features**: **44 done, 1 partial, 6 not s
 | ID | Feature | Status | Reality / gap | Effort |
 |---|---|---|---|---|
 | M01 | Auto typing into dims/measures | **Done** | `connectors::infer_role`; data pane split | — |
-| M02 | Rename / hide / reorder / folders | **Not started** | `Field` has `name`/`hidden`, but no API or UI. Rename is coupled to calculations (expressions reference `[Name]`), so it must rewrite references | M |
+| M02 | Rename / hide / reorder / folders | **Done** | Rename rewrites calculation references; hide/unhide; move within a group; folders group the data pane | — |
 | M03 | Type override, number and date formats | **Done** | Type override casts in SQL; number and date formats; dates are categories in bars, continuous on line/area/point | — |
 | M04 | Field descriptions | **Done** | Editable from the data-pane menu, shown as a hover tooltip | — |
 
@@ -183,7 +183,7 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [x] **V09 donut** — inner radius on the pie scene; mark choice in the toolbar. **S**
 - [x] **M04 descriptions** — editor + tooltip; needs no format change. **S**
 - [x] **T06 jump to source** — click a report element to activate its worksheet. **S**
-- [ ] **M02 hide + reorder** — data-pane toggles; rename deferred or done with reference rewriting. **M**
+- [x] **M02 rename, hide, reorder and folders** — reference rewriting, data-pane folders. **M**
 - [x] **V06 axis titles + tooltips** — done. **M**
 - [x] **V11 palette verification** — Okabe–Ito default; scene/theme kept in sync by a test. **S**
 - [x] **U07 dark mode** — light/dark switch in the top bar (persistence not yet). **S**
