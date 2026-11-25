@@ -166,6 +166,7 @@ pub fn render(
         batches: &result.batches,
         size,
         margins: slickbi_scene::Margins::default(),
+        options: slickbi_scene::SceneOptions::default(),
     };
     let scene = slickbi_scene::build(&spec)?;
     let png = slickbi_render::render_png(&scene, scale)?;

@@ -784,6 +784,7 @@ impl SlickBiApp {
                 {
                     self.session.set_chart_title(report, index, &buffer);
                 }
+                self.element_style(ui, report, index);
             }
 
             if let Some(text) = self
@@ -903,6 +904,52 @@ impl SlickBiApp {
         });
     }
 
+    /// The presentation override toggles for one chart element.
+    fn element_style(&mut self, ui: &mut egui::Ui, report: usize, index: usize) {
+        let Some(mut overrides) = self.session.chart_overrides(report, index) else {
+            return;
+        };
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            let mut show_title = overrides.show_title.unwrap_or(true);
+            if ui.checkbox(&mut show_title, "Title").changed() {
+                overrides.show_title = Some(show_title);
+                changed = true;
+            }
+            let mut show_legend = overrides.show_legend.unwrap_or(true);
+            if ui.checkbox(&mut show_legend, "Legend").changed() {
+                overrides.show_legend = Some(show_legend);
+                changed = true;
+            }
+            let mut show_axes = overrides.show_axes.unwrap_or(true);
+            if ui.checkbox(&mut show_axes, "Axes").changed() {
+                overrides.show_axes = Some(show_axes);
+                changed = true;
+            }
+            let mut border = overrides.border.unwrap_or(false);
+            if ui.checkbox(&mut border, "Border").changed() {
+                overrides.border = Some(border);
+                changed = true;
+            }
+            ui.label(egui::RichText::new("Pad").small().weak());
+            let mut padding = overrides.padding.unwrap_or(0.0) as f32;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut padding)
+                        .range(0.0..=48.0)
+                        .speed(1.0),
+                )
+                .changed()
+            {
+                overrides.padding = Some(padding as f64);
+                changed = true;
+            }
+        });
+        if changed {
+            self.session.set_chart_overrides(report, index, overrides);
+        }
+    }
+
     fn report_canvas(&mut self, ui: &mut egui::Ui) {
         /// Space reserved above an element's chart for its title, in points.
         const TITLE_BAND: f32 = 22.0;
@@ -983,10 +1030,18 @@ impl SlickBiApp {
                             );
                         }
                     }
-                    let scaled = (chart_rect.width(), chart_rect.height());
+                    let padding = chart.overrides.padding.unwrap_or(0.0) as f32 * scale;
+                    if padding > 0.0 {
+                        chart_rect = chart_rect.shrink(padding);
+                    }
+                    let options = slickbi_scene::SceneOptions {
+                        show_axes: chart.overrides.show_axes.unwrap_or(true),
+                        show_legend: chart.overrides.show_legend.unwrap_or(true),
+                    };
+                    let scaled = (chart_rect.width().max(1.0), chart_rect.height().max(1.0));
                     let scene = self
                         .session
-                        .scene_for(&chart.worksheet, scaled)
+                        .scene_for_with(&chart.worksheet, scaled, options)
                         .ok()
                         .flatten();
                     match scene {

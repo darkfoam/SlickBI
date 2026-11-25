@@ -196,6 +196,26 @@ pub struct SceneSpec<'a> {
     pub size: (f32, f32),
     /// The margins around the plot.
     pub margins: Margins,
+    /// Presentation options that do not change what the chart measures.
+    pub options: SceneOptions,
+}
+
+/// Presentation options a report element may override without changing the data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SceneOptions {
+    /// Whether to draw axes and reserve space for their labels.
+    pub show_axes: bool,
+    /// Whether to draw a legend when the chart splits into several series.
+    pub show_legend: bool,
+}
+
+impl Default for SceneOptions {
+    fn default() -> Self {
+        SceneOptions {
+            show_axes: true,
+            show_legend: true,
+        }
+    }
 }
 
 /// Builds a scene from planned, aggregated rows.
@@ -223,16 +243,18 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
     // A pie colours by category and ignores the colour shelf, but still needs legend space.
     let pie = matches!(spec.mark, Mark::Arc);
     let has_color = !pie && color_index.is_some();
-    let show_legend = has_color || pie;
+    let show_axes = spec.options.show_axes && !pie;
+    let show_legend = spec.options.show_legend && (has_color || pie);
 
-    let margins = if pie {
+    // A pie has no axes; a chart with its axes hidden gets uniform, tighter margins.
+    let margins = if !show_axes {
         Margins {
             left: 16.0,
             right: 16.0,
             bottom: 16.0,
-            top: spec.margins.top.max(16.0) + LEGEND_HEIGHT,
+            top: spec.margins.top.max(16.0) + if show_legend { LEGEND_HEIGHT } else { 0.0 },
         }
-    } else if has_color {
+    } else if show_legend {
         Margins {
             top: spec.margins.top + LEGEND_HEIGHT,
             ..spec.margins
@@ -259,6 +281,17 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
         Mark::Arc => arc_scene(spec, plot, x, numeric_y(y)?),
         other => Err(SceneError::UnsupportedMark { mark: other }),
     }?;
+
+    if !show_axes {
+        scene.x_axis = Axis {
+            ticks: Vec::new(),
+            categorical: scene.x_axis.categorical,
+        };
+        scene.y_axis = Axis {
+            ticks: Vec::new(),
+            categorical: scene.y_axis.categorical,
+        };
+    }
 
     if show_legend {
         scene.legend = scene
@@ -1014,6 +1047,7 @@ mod tests {
             batches,
             size: (400.0, 300.0),
             margins: Margins::default(),
+            options: SceneOptions::default(),
         }
     }
 
@@ -1384,5 +1418,39 @@ mod tests {
             assert!(bar.y >= scene.plot.y - 0.01);
             assert!(bar.y + bar.height <= scene.plot.y + scene.plot.height + 0.01);
         }
+    }
+
+    #[test]
+    fn hiding_axes_and_legend_clears_them_but_keeps_the_marks() {
+        let batch = batch_categorical_color(&[("A", 3.0, "red"), ("A", 5.0, "blue")]);
+        let batches = [batch];
+        let columns = color_columns();
+        let mut scene_spec = spec(Mark::Bar, &columns, &batches);
+        scene_spec.options = SceneOptions {
+            show_axes: false,
+            show_legend: false,
+        };
+
+        let scene = build(&scene_spec).expect("builds");
+        assert!(scene.x_axis.ticks.is_empty());
+        assert!(scene.y_axis.ticks.is_empty());
+        assert!(scene.legend.is_empty());
+        assert_eq!(scene.series.len(), 2, "the marks are still drawn");
+    }
+
+    #[test]
+    fn hiding_axes_keeps_a_requested_legend() {
+        let batch = batch_categorical_color(&[("A", 3.0, "red"), ("A", 5.0, "blue")]);
+        let batches = [batch];
+        let columns = color_columns();
+        let mut scene_spec = spec(Mark::Bar, &columns, &batches);
+        scene_spec.options = SceneOptions {
+            show_axes: false,
+            show_legend: true,
+        };
+
+        let scene = build(&scene_spec).expect("builds");
+        assert!(scene.x_axis.ticks.is_empty());
+        assert_eq!(scene.legend.len(), 2);
     }
 }

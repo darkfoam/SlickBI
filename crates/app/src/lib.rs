@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use slickbi_engine::{Engine, SourceFormat};
 use slickbi_model::Model;
 use slickbi_planner::{PlanOptions, plan};
-use slickbi_scene::{Margins, Scene, SceneSpec, build};
+use slickbi_scene::{Margins, Scene, SceneOptions, SceneSpec, build};
 use slickbi_spec::{
     Agg, Channel, DataModelId, DataType, Field, FieldId, FieldSource, Filter, FilterOp, Mark,
     Report, Role, Scalar, SortKey, Workbook, Worksheet, WorksheetId,
@@ -561,6 +561,31 @@ impl Session {
         }
     }
 
+    /// The presentation overrides of a chart element.
+    pub fn chart_overrides(&self, report: usize, index: usize) -> Option<slickbi_spec::Overrides> {
+        let report = self.workbook.reports.get(report)?;
+        let element = report.elements.get(index)?;
+        match &element.kind {
+            slickbi_spec::ElementKind::Chart { chart } => Some(chart.overrides.clone()),
+            slickbi_spec::ElementKind::Text { .. } => None,
+        }
+    }
+
+    /// Replaces a chart element's presentation overrides. Nothing here changes the numbers.
+    pub fn set_chart_overrides(
+        &mut self,
+        report: usize,
+        index: usize,
+        overrides: slickbi_spec::Overrides,
+    ) {
+        if let Some(report) = self.workbook.reports.get_mut(report)
+            && let Some(element) = report.elements.get_mut(index)
+            && let slickbi_spec::ElementKind::Chart { chart } = &mut element.kind
+        {
+            chart.overrides = overrides;
+        }
+    }
+
     /// The report of a chart element, as `(worksheet, title)`.
     pub fn chart_element(
         &self,
@@ -710,7 +735,7 @@ impl Session {
         if is_measure { Agg::Sum } else { Agg::None }
     }
 
-    /// Builds the scene for any worksheet at a given size.
+    /// Builds the scene for a worksheet at a given size with the default presentation.
     ///
     /// Returns `Ok(None)` when the worksheet has no shelves yet (nothing to draw), and `Err`
     /// when planning, execution or scene building fails.
@@ -718,6 +743,16 @@ impl Session {
         &mut self,
         worksheet_id: &WorksheetId,
         size: (f32, f32),
+    ) -> Result<Option<Scene>, String> {
+        self.scene_for_with(worksheet_id, size, SceneOptions::default())
+    }
+
+    /// Builds the scene for a worksheet with presentation options, as a report element does.
+    pub fn scene_for_with(
+        &mut self,
+        worksheet_id: &WorksheetId,
+        size: (f32, f32),
+        options: SceneOptions,
     ) -> Result<Option<Scene>, String> {
         let Some(worksheet) = self
             .workbook
@@ -751,6 +786,7 @@ impl Session {
             batches: &result.batches,
             size,
             margins: Margins::default(),
+            options,
         };
         build(&spec).map(Some).map_err(|e| e.to_string())
     }
@@ -1333,6 +1369,31 @@ mod tests {
         // Reordering past the ends is a no-op, not an error.
         session.reorder_element(0, 0, -5);
         assert_eq!(session.reports()[0].elements[0].id, second);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn chart_presentation_overrides_round_trip() {
+        let (mut session, path) = loaded();
+        session.add_report("Styled");
+        let worksheet = session.active_worksheet().expect("ws").id.clone();
+        session.add_chart_to_report(&worksheet);
+
+        assert_eq!(
+            session.chart_overrides(0, 0),
+            Some(slickbi_spec::Overrides::default())
+        );
+
+        let overrides = slickbi_spec::Overrides {
+            show_title: Some(false),
+            show_legend: Some(false),
+            show_axes: Some(false),
+            padding: Some(8.0),
+            border: Some(true),
+            background: None,
+        };
+        session.set_chart_overrides(0, 0, overrides.clone());
+        assert_eq!(session.chart_overrides(0, 0), Some(overrides));
         std::fs::remove_file(&path).ok();
     }
 

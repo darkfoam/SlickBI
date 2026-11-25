@@ -469,7 +469,7 @@ mod tests {
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use slickbi_planner::{ChannelKind, OutputColumn};
-    use slickbi_scene::{Margins, SceneSpec, build};
+    use slickbi_scene::{Margins, SceneOptions, SceneSpec, build};
     use slickbi_spec::{DataType as SpecType, FieldId, Mark};
     use std::sync::Arc;
 
@@ -502,6 +502,7 @@ mod tests {
             batches: &[batch],
             size: (400.0, 300.0),
             margins: Margins::default(),
+            options: SceneOptions::default(),
         };
         build(&spec).expect("scene")
     }
@@ -570,6 +571,7 @@ mod tests {
             batches: &[batch],
             size: (400.0, 300.0),
             margins: Margins::default(),
+            options: SceneOptions::default(),
         };
         build(&spec).expect("scene")
     }

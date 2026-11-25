@@ -109,7 +109,7 @@ that needs different data is a forked worksheet.
 | R02 | Chart elements that reference worksheets live | F | 0.0.3 | done |
 | R03 | Move, resize and reorder elements | F | 0.0.3 | done |
 | R04 | Text and markdown elements | F | 0.0.3 | done |
-| R05 | Per-element presentation overrides: title, legend, axes, padding, border | F | 0.0.3 | in progress |
+| R05 | Per-element presentation overrides: title, legend, axes, padding, border | F | 0.0.3 | done |
 | R06 | Cross-filtering between report elements | F | 0.0.3 | planned |
 | R07 | Report-level filters | F | 0.1.0 | planned |
 | R08 | Page setup: size, margins, header, footer, page numbers | F | 0.1.0 | planned |
