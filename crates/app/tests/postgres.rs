@@ -1,7 +1,8 @@
 //! MVP-02: a read-only PostgreSQL table reaches the field list and first chart within two seconds.
 //!
 //! The test skips when `SLICKBI_TEST_PG` is absent, so `cargo xtask ci` stays green without a
-//! server. Run it against the container described in `docs/MVP.md`:
+//! server. Point it at a PostgreSQL that has the `sales` table below and a read-only user; the
+//! env vars match `crates/connectors/tests/databases.rs`:
 //!
 //! ```sh
 //! SLICKBI_TEST_PG=127.0.0.1:55432/demo \
