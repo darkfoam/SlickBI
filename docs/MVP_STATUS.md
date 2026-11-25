@@ -170,15 +170,8 @@ Counts: **Met 10 · Partial 6 · Not met 4.**
 
 ## 5. Where `FEATURES.md` lags the code (fix the statuses)
 
-- **V06** is `planned` but a legend and `show_axes`/`show_legend` overrides exist → `in progress`.
-- **V11** is `planned` but the default palette is already documented colourblind-safe → `in progress`
-  (pending a verification test).
-- **A02** is `done` but report rendering is missing for the CLI → `in progress`.
-- **O01 / O02 / O04** are `planned` but the format version, refusal and generated schema exist →
-  `in progress`.
-- **D14** is `planned` but save embeds Parquet extracts → `in progress`.
-- **U07** is `planned` but a light theme and two report themes exist → `in progress`.
-- **X01** is `done` as a feature, but MVP-17 (byte-identical CSV) is a separate acceptance gap.
+No known drift at this snapshot. The items previously listed here — V06, V11, A02, O01/O02/O04,
+D14 and U07 — were closed in the tree and their statuses updated.
 
 ---
 
@@ -197,7 +190,7 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [ ] **U08 onboarding workbook** — generate a small sample `.scz` on first run. **S**
 
 ### Phase 2 — chart types (each needs the scene + both renderers)
-- [ ] **V10 KPI/text tiles** — scene for `Mark::Text` (planner already plans it). **M**
+- [x] **V10 KPI/text tiles** — scene for `Mark::Text` (planner already plans it). **M**
 - [ ] **V08 heatmaps** — `Mark::Rect` + a sequential colour scale + two categorical axes. **M**
 - [x] **V04 tables** — `Mark::Table`, text-grid scene, all renderers, UI. **L**
 - [x] **V05 remaining shelves** — size/text/detail/tooltip through the scene and renderers. **M**
@@ -208,14 +201,15 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 ### Phase 3 — analytical core
 - [ ] **C03 parameters** — `Workbook.parameters`, filter binding, calc references, UI, planner
       binding. Unblocks **MVP-06**. **L**
-- [ ] **C04 inline span errors** — highlight the offending range in the calc editor. **M**
+- [x] **C04 inline span errors** — highlight the offending range in the calc editor. **M**
 - [x] **M03 remainder** — type override; date formatting and date dimensions. **M**
 
 ### Phase 4 — reports and testing seams
 - [ ] **R06 cross-filtering** — hit index, cross-filter state, predicate per element. Unblocks
       **MVP-13**. **L**
-- [ ] **A02 report render in the CLI** + an image-diff harness against the on-screen renderer.
-      Unblocks **MVP-18**. **M**
+- [x] **A02 report render in the CLI** — `slickbi-cli render-report` composes a report to PNG. **M**
+- [ ] **Image-diff harness** between the on-screen renderer and the export renderer + a
+      deterministic reflow test at 1400/900 px. Unblocks **MVP-14** and **MVP-18**. **M**
 
 ### Phase 5 — sources (external dependencies / infrastructure)
 - [x] **D05 SQLite** — native `rusqlite` driver: read as text, typed into DuckDB. **L**
@@ -223,7 +217,8 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [x] **D07 MySQL / MariaDB** — native `mysql` driver, verified against MariaDB. **XL**
 - [x] **D02 Excel** — `calamine` reads workbooks; sheet picker. **L**
 - [x] **D18 / D19 ODS and Numbers** — `calamine` and `iwork` feed the same typed importer. **M**
-- [ ] **D14 / D15** — D14 done; live DB mode is not built. **L**
+- [x] **D14 extract to Parquet** — `Session::save` embeds one; an explicit Export action exists. **M**
+- [ ] **D15 live DB mode** — the design is in ADR 0002; the dialect-aware executor is not built. **L**
 - [ ] Credentials in the OS keychain — currently session-only, and never persisted. **M**
 
 ### Phase 6 — format, acceptance and release hardening
