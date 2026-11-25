@@ -50,7 +50,7 @@ that needs different data is a forked worksheet.
 | M01 | Automatic typing into dimensions and measures | F | 0.0.2 | done |
 | M02 | Rename, hide, reorder and group fields into folders | F | 0.0.2 | planned |
 | M03 | Type override, number and date formats | F | 0.0.3 | in progress |
-| M04 | Field descriptions | F | 0.0.3 | planned |
+| M04 | Field descriptions | F | 0.0.3 | done |
 | M05 | Relationships between tables, with cardinality | F | 0.2.0 | planned |
 | M06 | Joins and unions in the data model | F | 0.2.0 | planned |
 | M07 | Hierarchies and drill paths | F | 0.3.0 | planned |
@@ -99,7 +99,7 @@ that needs different data is a forked worksheet.
 | T03 | "Used in" indicator: which reports reference this worksheet | F | 0.0.3 | done |
 | T04 | Fork a worksheet into an independent copy | F | 0.0.2 | done |
 | T05 | Referential integrity: warn before deleting a referenced worksheet, show a placeholder in reports | F | 0.0.3 | done |
-| T06 | Jump from a report element to its source worksheet | F | 0.0.3 | planned |
+| T06 | Jump from a report element to its source worksheet | F | 0.0.3 | done |
 
 ## Reports
 
@@ -205,7 +205,7 @@ leaving the machine on our behalf.
 | U04 | Signed and notarised installers | F | 0.1.0 | planned |
 | U05 | Auto-update with signed manifests | F | 0.1.0 | planned |
 | U06 | File association for `.scz` | F | 0.1.0 | planned |
-| U07 | Dark and light themes | F | 0.0.3 | planned |
+| U07 | Dark and light themes | F | 0.0.3 | done |
 | U08 | Onboarding sample workbook | F | 0.0.3 | planned |
 | U09 | Keyboard-complete navigation and screen-reader support | F | 0.2.0 | planned |
 | U10 | Accessible data-table fallback for every chart | F | 0.2.0 | planned |

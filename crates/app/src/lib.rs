@@ -259,6 +259,22 @@ impl Session {
         }
     }
 
+    /// Makes the worksheet with this id active. Returns whether it exists.
+    pub fn activate_worksheet(&mut self, id: &WorksheetId) -> bool {
+        match self
+            .workbook
+            .worksheets
+            .iter()
+            .position(|worksheet| &worksheet.id == id)
+        {
+            Some(index) => {
+                self.set_active(index);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Renames a worksheet. Blank names are ignored.
     pub fn rename_worksheet(&mut self, index: usize, name: &str) {
         let name = name.trim();
@@ -544,6 +560,39 @@ impl Session {
             candidate.format = format;
         }
         self.refresh();
+    }
+
+    /// The description of a field, if any.
+    pub fn field_description(&self, field: &FieldId) -> Option<String> {
+        let worksheet = self.active_worksheet()?;
+        let model = self
+            .workbook
+            .models
+            .iter()
+            .find(|m| m.id == worksheet.model)?;
+        model
+            .fields
+            .iter()
+            .find(|candidate| &candidate.id == field)
+            .and_then(|candidate| candidate.description.clone())
+    }
+
+    /// Sets or clears a field's description. A blank description clears it.
+    pub fn set_field_description(&mut self, field: &FieldId, description: Option<String>) {
+        let Some(model_id) = self
+            .active_worksheet()
+            .map(|worksheet| worksheet.model.clone())
+        else {
+            return;
+        };
+        let description = description
+            .map(|text| text.trim().to_owned())
+            .filter(|text| !text.is_empty());
+        if let Some(model) = self.workbook.models.iter_mut().find(|m| m.id == model_id)
+            && let Some(candidate) = model.fields.iter_mut().find(|f| &f.id == field)
+        {
+            candidate.description = description;
+        }
     }
 
     /// Adds a report and makes it active.
@@ -1241,6 +1290,32 @@ mod tests {
             texts.iter().any(|text| text.starts_with('$')),
             "the currency format reached the axis: {texts:?}"
         );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_report_element_can_jump_to_its_worksheet() {
+        let (mut session, path) = loaded();
+        session.add_worksheet();
+        let first = session.workbook().worksheets[0].id.clone();
+
+        assert!(session.activate_worksheet(&first));
+        assert_eq!(session.active(), 0);
+        assert!(!session.activate_worksheet(&WorksheetId::new("missing")));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_field_description_round_trips() {
+        let (mut session, path) = loaded();
+        let amount = FieldId::new("amount");
+        session.set_field_description(&amount, Some("  Revenue in USD  ".to_owned()));
+        assert_eq!(
+            session.field_description(&amount).as_deref(),
+            Some("Revenue in USD")
+        );
+        session.set_field_description(&amount, Some("   ".to_owned()));
+        assert_eq!(session.field_description(&amount), None);
         std::fs::remove_file(&path).ok();
     }
 

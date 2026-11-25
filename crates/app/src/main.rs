@@ -89,12 +89,16 @@ struct SlickBiApp {
     connect_table: String,
     connect_tables: Vec<String>,
     connect_error: Option<String>,
+    dark: bool,
+
+    description_field: Option<FieldId>,
+    description_text: String,
 }
 
 impl SlickBiApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         install_fonts(&cc.egui_ctx);
-        install_style(&cc.egui_ctx);
+        install_style(&cc.egui_ctx, false);
 
         SlickBiApp {
             session: Session::new(),
@@ -122,6 +126,9 @@ impl SlickBiApp {
             connect_table: String::new(),
             connect_tables: Vec::new(),
             connect_error: None,
+            dark: false,
+            description_field: None,
+            description_text: String::new(),
         }
     }
 
@@ -190,6 +197,14 @@ impl SlickBiApp {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(4.0);
+                if ui
+                    .button(if self.dark { "☀ Light" } else { "☾ Dark" })
+                    .on_hover_text("Toggle the light and dark interface")
+                    .clicked()
+                {
+                    self.dark = !self.dark;
+                    install_style(ui.ctx(), self.dark);
+                }
                 if ui
                     .selectable_label(self.mode == Mode::Reports, "Reports")
                     .clicked()
@@ -395,7 +410,11 @@ impl SlickBiApp {
                 egui::Button::new(name.clone()).min_size(egui::vec2(ui.available_width(), 26.0));
             ui.add(button)
         });
-        if inner.inner.clicked() {
+        let mut response = inner.inner;
+        if let Some(description) = self.session.field_description(&id) {
+            response = response.on_hover_text(description);
+        }
+        if response.clicked() {
             let shelf = if role == Role::Measure {
                 Shelf::Y
             } else {
@@ -403,12 +422,22 @@ impl SlickBiApp {
             };
             self.session.assign(shelf, &id);
         }
-        inner.inner.context_menu(|ui| {
+        response.context_menu(|ui| {
             if ui.button("Format…").clicked() {
                 self.open_format(&id);
                 ui.close();
             }
+            if ui.button("Description…").clicked() {
+                self.open_description(&id);
+                ui.close();
+            }
         });
+    }
+
+    /// Loads a field's description into the editor and opens it.
+    fn open_description(&mut self, id: &FieldId) {
+        self.description_text = self.session.field_description(id).unwrap_or_default();
+        self.description_field = Some(id.clone());
     }
 
     /// Loads a field's current format into the editor and opens it.
@@ -453,7 +482,7 @@ impl SlickBiApp {
             .and_then(|c| self.field_name(&c.field))
             .unwrap_or_default();
 
-        let (_, payload) = ui.dnd_drop_zone::<DragField, _>(shelf_frame(), |ui| {
+        let (_, payload) = ui.dnd_drop_zone::<DragField, _>(shelf_frame(ui), |ui| {
             if let Some(channel) = &channel {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(&name).strong().monospace());
@@ -1055,6 +1084,7 @@ impl SlickBiApp {
 
         let report_index = self.session.active_report();
         let mut remove = None;
+        let mut jump = None;
 
         for (index, element) in report.elements.iter().enumerate() {
             let rect = egui::Rect::from_min_size(
@@ -1071,6 +1101,16 @@ impl SlickBiApp {
 
             match &element.kind {
                 slickbi_spec::ElementKind::Chart { chart } => {
+                    // Clicking a chart opens its source worksheet (T06).
+                    let response = ui.interact(
+                        rect,
+                        egui::Id::unique(("report-jump", element.id.as_str())),
+                        egui::Sense::click(),
+                    );
+                    if response.clicked() {
+                        jump = Some(chart.worksheet.clone());
+                    }
+                    response.on_hover_text("Open the source worksheet");
                     // The element title: the override, else the worksheet name, unless hidden.
                     let show_title = chart.overrides.show_title.unwrap_or(true);
                     let mut chart_rect = rect;
@@ -1160,6 +1200,11 @@ impl SlickBiApp {
 
         if let Some(index) = remove {
             self.session.remove_report_element(report_index, index);
+        }
+        if let Some(worksheet) = jump
+            && self.session.activate_worksheet(&worksheet)
+        {
+            self.mode = Mode::Charts;
         }
     }
 
@@ -1329,6 +1374,51 @@ impl SlickBiApp {
             });
         if !open {
             self.format_field = None;
+        }
+    }
+
+    fn description_window(&mut self, ctx: &egui::Context) {
+        let Some(field) = self.description_field.clone() else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new("Field description")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(360.0)
+            .show(ctx, |ui| {
+                let name = self.field_name(&field).unwrap_or_else(|| field.to_string());
+                ui.label(egui::RichText::new(name).strong());
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("Shown as a tooltip and offered to external agents.")
+                        .small()
+                        .weak(),
+                );
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.description_text)
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        self.session
+                            .set_field_description(&field, Some(self.description_text.clone()));
+                        self.description_field = None;
+                    }
+                    if ui.button("Clear").clicked() {
+                        self.session.set_field_description(&field, None);
+                        self.description_field = None;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.description_field = None;
+                    }
+                });
+            });
+        if !open {
+            self.description_field = None;
         }
     }
 
@@ -1590,6 +1680,7 @@ impl eframe::App for SlickBiApp {
         self.delete_window(ui.ctx());
         self.format_window(ui.ctx());
         self.connect_window(ui.ctx());
+        self.description_window(ui.ctx());
     }
 }
 
@@ -1607,13 +1698,25 @@ fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
-fn install_style(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::light();
-    visuals.panel_fill = egui::Color32::from_rgb(0xF5, 0xF6, 0xF8);
-    visuals.window_fill = egui::Color32::WHITE;
-    visuals.extreme_bg_color = egui::Color32::WHITE;
-    visuals.selection.bg_fill = egui::Color32::from_rgb(0x0B, 0x6E, 0x99);
-    visuals.hyperlink_color = egui::Color32::from_rgb(0x0B, 0x6E, 0x99);
+fn install_style(ctx: &egui::Context, dark: bool) {
+    let mut visuals = if dark {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    };
+    if dark {
+        visuals.panel_fill = egui::Color32::from_rgb(0x1A, 0x1E, 0x24);
+        visuals.window_fill = egui::Color32::from_rgb(0x22, 0x27, 0x2E);
+        visuals.extreme_bg_color = egui::Color32::from_rgb(0x0F, 0x12, 0x16);
+        visuals.selection.bg_fill = egui::Color32::from_rgb(0x2A, 0x8A, 0xB8);
+        visuals.hyperlink_color = egui::Color32::from_rgb(0x63, 0xB8, 0xE0);
+    } else {
+        visuals.panel_fill = egui::Color32::from_rgb(0xF5, 0xF6, 0xF8);
+        visuals.window_fill = egui::Color32::WHITE;
+        visuals.extreme_bg_color = egui::Color32::WHITE;
+        visuals.selection.bg_fill = egui::Color32::from_rgb(0x0B, 0x6E, 0x99);
+        visuals.hyperlink_color = egui::Color32::from_rgb(0x0B, 0x6E, 0x99);
+    }
     for widget in [
         &mut visuals.widgets.inactive,
         &mut visuals.widgets.hovered,
@@ -1631,9 +1734,9 @@ fn install_style(ctx: &egui::Context) {
     });
 }
 
-fn shelf_frame() -> egui::Frame {
+fn shelf_frame(ui: &egui::Ui) -> egui::Frame {
     egui::Frame::NONE
-        .fill(egui::Color32::from_rgb(0xEC, 0xEF, 0xF3))
+        .fill(ui.visuals().widgets.noninteractive.bg_fill)
         .corner_radius(8.0)
         .inner_margin(egui::Margin::symmetric(10, 8))
 }
