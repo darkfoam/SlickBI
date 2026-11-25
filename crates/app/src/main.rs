@@ -323,6 +323,7 @@ impl SlickBiApp {
                 (Mark::Arc, "Pie"),
                 (Mark::Donut, "Donut"),
                 (Mark::Text, "KPI"),
+                (Mark::Table, "Table"),
             ] {
                 let selected = self
                     .session
@@ -2051,6 +2052,44 @@ fn draw_scene_in(ui: &mut egui::Ui, scene: &Scene, rect: egui::Rect) {
                     egui::Color32::from_rgb(0x24, 0x2C, 0x36),
                 );
             }
+        }
+    }
+
+    if let Some(table) = &scene.table {
+        let header_ink = egui::Color32::from_rgb(0x24, 0x2C, 0x36);
+        let body_ink = egui::Color32::from_rgb(0x3D, 0x47, 0x54);
+        let top = rect.min.y + table.y;
+        for (index, header) in table.headers.iter().enumerate() {
+            let x = rect.min.x + table.x + table.column_width * index as f32 + 4.0;
+            painter.text(
+                egui::pos2(x, top),
+                egui::Align2::LEFT_TOP,
+                header,
+                egui::FontId::proportional(11.0),
+                header_ink,
+            );
+        }
+        let separator = top + table.header_height;
+        painter.line_segment(
+            [
+                egui::pos2(rect.min.x + table.x, separator),
+                egui::pos2(rect.min.x + table.x + table.width, separator),
+            ],
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(0xDD, 0xE1, 0xE6)),
+        );
+        let mut row_top = separator + (table.row_height - 10.0) / 2.0;
+        for row in &table.rows {
+            for (index, cell) in row.iter().enumerate() {
+                let x = rect.min.x + table.x + table.column_width * index as f32 + 4.0;
+                painter.text(
+                    egui::pos2(x, row_top),
+                    egui::Align2::LEFT_TOP,
+                    cell,
+                    egui::FontId::proportional(10.0),
+                    body_ink,
+                );
+            }
+            row_top += table.row_height;
         }
     }
 

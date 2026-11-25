@@ -61,6 +61,7 @@ fn rasterize_with(scene: &Scene, scale: f32, watermark: bool) -> Pixmap {
 
     canvas.draw_axes(scene);
     canvas.draw_series(scene);
+    canvas.draw_table(scene);
     canvas.draw_labels(scene);
     canvas.draw_legend(scene);
     canvas.draw_titles(scene);
@@ -366,6 +367,38 @@ pub fn render_svg(scene: &Scene) -> String {
                     escape_xml(text)
                 );
             }
+        }
+    }
+
+    if let Some(table) = &scene.table {
+        let top = table.y;
+        for (index, header) in table.headers.iter().enumerate() {
+            let x = table.x + table.column_width * index as f32 + 4.0;
+            let _ = write!(
+                out,
+                r#"<text x="{x:.2}" y="{:.2}" font-family="{FONT}" font-size="11" fill="{AXIS_TEXT}" text-anchor="start">{}</text>"#,
+                top + 11.0,
+                escape_xml(header)
+            );
+        }
+        let separator = top + table.header_height;
+        let _ = write!(
+            out,
+            r##"<line x1="{:.2}" y1="{separator:.2}" x2="{:.2}" y2="{separator:.2}" stroke="#dde1e6" stroke-width="1"/>"##,
+            table.x,
+            table.x + table.width
+        );
+        let mut row_top = separator + (table.row_height - 10.0) / 2.0;
+        for row in &table.rows {
+            for (index, cell) in row.iter().enumerate() {
+                let x = table.x + table.column_width * index as f32 + 4.0;
+                let _ = write!(
+                    out,
+                    r#"<text x="{x:.2}" y="{row_top:.2}" font-family="{FONT}" font-size="10" fill="{AXIS_TEXT}" text-anchor="start">{}</text>"#,
+                    escape_xml(cell)
+                );
+            }
+            row_top += table.row_height;
         }
     }
 
@@ -686,6 +719,58 @@ impl Canvas {
                 &TEXT,
                 Anchor::Center,
             );
+        }
+    }
+
+    /// Draws a table: a header row, a separator, then the body rows.
+    fn draw_table(&mut self, scene: &Scene) {
+        let Some(table) = &scene.table else {
+            return;
+        };
+        let scale = self.scale;
+        let header_ink = [0.14, 0.17, 0.21, 1.0];
+        let body_ink = [0.24, 0.28, 0.33, 1.0];
+
+        let top = table.y;
+        for (index, header) in table.headers.iter().enumerate() {
+            let x = table.x + table.column_width * index as f32 + 4.0;
+            self.text(
+                header,
+                11.0,
+                x * scale,
+                top * scale,
+                &header_ink,
+                Anchor::Left,
+            );
+        }
+        let separator = top + table.header_height;
+        let stroke = Stroke {
+            width: scale.max(1.0),
+            ..Stroke::default()
+        };
+        self.line(
+            table.x * scale,
+            separator * scale,
+            (table.x + table.width) * scale,
+            separator * scale,
+            &[0.86, 0.88, 0.91, 1.0],
+            &stroke,
+        );
+
+        let mut row_top = separator + (table.row_height - 10.0) / 2.0;
+        for row in &table.rows {
+            for (index, cell) in row.iter().enumerate() {
+                let x = table.x + table.column_width * index as f32 + 4.0;
+                self.text(
+                    cell,
+                    10.0,
+                    x * scale,
+                    row_top * scale,
+                    &body_ink,
+                    Anchor::Left,
+                );
+            }
+            row_top += table.row_height;
         }
     }
 

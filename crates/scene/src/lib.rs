@@ -122,6 +122,27 @@ pub struct TooltipMark {
     pub text: String,
 }
 
+/// A table of formatted cells, with a header row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Table {
+    /// The column titles.
+    pub headers: Vec<String>,
+    /// The rows, one cell per column.
+    pub rows: Vec<Vec<String>>,
+    /// Left edge.
+    pub x: f32,
+    /// Top edge.
+    pub y: f32,
+    /// Total width.
+    pub width: f32,
+    /// Width of one column.
+    pub column_width: f32,
+    /// Height of the header row.
+    pub header_height: f32,
+    /// Height of each body row.
+    pub row_height: f32,
+}
+
 /// One bar, `y` and `height` measured downward from the top of the bar.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bar {
@@ -234,6 +255,8 @@ pub struct Scene {
     pub labels: Vec<Label>,
     /// Hover targets with their tooltip text.
     pub tooltips: Vec<TooltipMark>,
+    /// A table, when the mark is a table.
+    pub table: Option<Table>,
 }
 
 /// Everything needed to build a scene.
@@ -281,6 +304,10 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
     // A KPI tile is a single value: it needs no x or y shelf.
     if spec.mark == Mark::Text {
         return text_scene(spec);
+    }
+    // A table lists whatever columns the shelves produced: it needs no x or y shelf either.
+    if spec.mark == Mark::Table {
+        return table_scene(spec);
     }
 
     let x_index = spec
@@ -668,6 +695,7 @@ fn bar_scene(
         y_title: None,
         labels,
         tooltips,
+        table: None,
     })
 }
 
@@ -746,6 +774,7 @@ fn line_scene(
         y_title: None,
         labels,
         tooltips,
+        table: None,
     })
 }
 
@@ -825,6 +854,7 @@ fn point_scene(
         y_title: None,
         labels,
         tooltips,
+        table: None,
     })
 }
 
@@ -904,6 +934,7 @@ fn arc_scene(
         y_title: None,
         labels,
         tooltips,
+        table: None,
     })
 }
 
@@ -945,6 +976,7 @@ fn text_scene(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
         y_title: None,
         labels,
         tooltips,
+        table: None,
     })
 }
 
@@ -969,6 +1001,93 @@ fn read_text_value(
         }
     }
     Ok(String::new())
+}
+
+/// A table: the result's columns and rows as formatted text, truncated to fit the panel.
+fn table_scene(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
+    let columns = spec.columns;
+    if columns.is_empty() {
+        return Err(SceneError::MissingShelf("column"));
+    }
+
+    let margin = 12.0;
+    let x = margin;
+    let y = margin;
+    let width = (spec.size.0 - margin * 2.0).max(1.0);
+    let header_height = 22.0;
+    let row_height = 18.0;
+    let available = (spec.size.1 - margin * 2.0 - header_height).max(0.0);
+    let max_rows = (available / row_height).floor() as usize;
+
+    let headers = columns.iter().map(|column| column.title.clone()).collect();
+    let numeric: Vec<Option<Vec<Option<f64>>>> = columns
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            read_axis(spec.batches, index, true)
+                .ok()
+                .and_then(XData::into_numeric)
+        })
+        .collect();
+
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut flat_row = 0usize;
+    'batches: for batch in spec.batches {
+        for row in 0..batch.num_rows() {
+            if rows.len() >= max_rows {
+                break 'batches;
+            }
+            let mut cells = Vec::with_capacity(columns.len());
+            for (index, column) in columns.iter().enumerate() {
+                let text = match &numeric[index] {
+                    Some(values) => match values.get(flat_row).copied().flatten() {
+                        Some(value) => format_number(value, column.format.as_ref()),
+                        None => String::new(),
+                    },
+                    None => arrow::util::display::array_value_to_string(batch.column(index), row)
+                        .unwrap_or_default(),
+                };
+                cells.push(text);
+            }
+            rows.push(cells);
+            flat_row += 1;
+        }
+    }
+
+    Ok(Scene {
+        width: spec.size.0,
+        height: spec.size.1,
+        plot: Rect {
+            x,
+            y,
+            width,
+            height: (spec.size.1 - margin * 2.0).max(1.0),
+        },
+        x_axis: Axis {
+            ticks: Vec::new(),
+            categorical: false,
+        },
+        y_axis: Axis {
+            ticks: Vec::new(),
+            categorical: false,
+        },
+        series: Vec::new(),
+        legend: Vec::new(),
+        x_title: None,
+        y_title: None,
+        labels: Vec::new(),
+        tooltips: Vec::new(),
+        table: Some(Table {
+            headers,
+            rows,
+            x,
+            y,
+            width,
+            column_width: width / columns.len() as f32,
+            header_height,
+            row_height,
+        }),
+    })
 }
 
 impl XData {
@@ -2055,5 +2174,24 @@ mod tests {
                 .iter()
                 .all(|point| (3.0..=12.0).contains(&point.radius))
         );
+    }
+
+    #[test]
+    fn a_table_lists_the_columns_and_rows() {
+        let columns = vec![
+            column(ChannelKind::X, "region"),
+            column(ChannelKind::Y, "amount"),
+        ];
+        let batch = batch_categorical_y(&["A", "B"], &[1.0, 2.0]);
+
+        let scene = build(&spec(Mark::Table, &columns, &[batch])).expect("builds");
+        let table = scene.table.expect("a table");
+        assert_eq!(
+            table.headers,
+            vec!["region".to_owned(), "amount".to_owned()]
+        );
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0][0], "A");
+        assert_eq!(table.rows[0][1], "1");
     }
 }

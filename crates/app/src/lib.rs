@@ -967,8 +967,8 @@ impl Session {
         else {
             return Err("the worksheet is missing".to_owned());
         };
-        // A KPI tile needs no x or y shelf; every other mark does.
-        if worksheet.mark != Mark::Text
+        // A KPI tile or a table needs no x or y shelf; every other mark does.
+        if !matches!(worksheet.mark, Mark::Text | Mark::Table)
             && (worksheet.encoding.x.is_none() || worksheet.encoding.y.is_none())
         {
             return Ok(None);
@@ -1843,6 +1843,22 @@ mod tests {
             "tooltip text: {:?}",
             scene.tooltips
         );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_table_worksheet_builds() {
+        let (mut session, path) = loaded();
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        session.set_mark(Mark::Table);
+
+        let scene = session
+            .scene()
+            .unwrap_or_else(|| panic!("no scene: {:?}", session.error()));
+        let table = scene.table.as_ref().expect("a table");
+        assert_eq!(table.headers.len(), 2);
+        assert!(!table.rows.is_empty(), "the table has rows");
         std::fs::remove_file(&path).ok();
     }
 

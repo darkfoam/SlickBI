@@ -30,6 +30,8 @@ pub enum Mark {
     Arc,
     /// A donut: an arc with a hole in the middle.
     Donut,
+    /// A table of the result's columns and rows.
+    Table,
     /// A horizontal or vertical rule.
     Rule,
 }

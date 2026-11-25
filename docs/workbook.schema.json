@@ -997,6 +997,11 @@
           "type": "string"
         },
         {
+          "const": "table",
+          "description": "A table of the result's columns and rows.",
+          "type": "string"
+        },
+        {
           "const": "rule",
           "description": "A horizontal or vertical rule.",
           "type": "string"
