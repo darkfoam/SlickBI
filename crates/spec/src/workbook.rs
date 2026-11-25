@@ -75,9 +75,10 @@ impl Theme {
     pub fn light() -> Self {
         Self {
             name: "Light".to_owned(),
+            // The Okabe–Ito palette: distinguishable under the common forms of colour blindness.
             palette: [
-                "#0b6e99", "#c2410c", "#4d7c0f", "#7c3aed", "#a16207", "#0f766e", "#be123c",
-                "#4338ca",
+                "#0072b2", "#e69f00", "#009e73", "#cc79a7", "#d55e00", "#56b4e9", "#f0e442",
+                "#999999",
             ]
             .into_iter()
             .map(str::to_owned)

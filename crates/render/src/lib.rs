@@ -785,11 +785,11 @@ mod tests {
 
     #[test]
     fn bars_are_drawn_in_the_series_colour() {
-        // The first palette colour, #0b6e99, must appear somewhere: the bars were actually drawn.
+        // The first Okabe–Ito palette colour, #0072b2, must appear: the bars were drawn.
         let pixmap = rasterize(&bar_scene(), 1.0);
         let found = pixmap.data().as_chunks::<4>().0.iter().any(|px| {
             let (r, g, b) = (px[0] as i32, px[1] as i32, px[2] as i32);
-            (r - 11).abs() < 30 && (g - 110).abs() < 30 && (b - 153).abs() < 30
+            r < 30 && (g - 114).abs() < 30 && (b - 178).abs() < 30
         });
         assert!(found, "no pixels matched the series colour");
     }
@@ -845,11 +845,11 @@ mod tests {
 
     #[test]
     fn pie_slices_are_drawn_in_the_palette_colours() {
-        // The first slice uses the first palette colour, #0b6e99.
+        // The first slice uses the first palette colour, #0072b2.
         let pixmap = rasterize(&pie_scene(), 1.0);
         let found = pixmap.data().as_chunks::<4>().0.iter().any(|px| {
             let (r, g, b) = (px[0] as i32, px[1] as i32, px[2] as i32);
-            (r - 11).abs() < 30 && (g - 110).abs() < 30 && (b - 153).abs() < 30
+            r < 30 && (g - 114).abs() < 30 && (b - 178).abs() < 30
         });
         assert!(found, "no pixels matched the first slice colour");
     }
@@ -884,7 +884,7 @@ mod tests {
         assert!(svg.ends_with("</svg>"));
         // Background, one rect per bar (four bars) and the plot border.
         assert!(svg.matches("<rect").count() >= 5, "expected bars as rects");
-        assert!(svg.contains("#0b6e99"), "bars use the first palette colour");
+        assert!(svg.contains("#0072b2"), "bars use the first palette colour");
         assert!(svg.contains("North"), "x-axis labels are present");
     }
 

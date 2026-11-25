@@ -21,15 +21,18 @@ use slickbi_spec::{FieldFormat, Mark};
 use thiserror::Error;
 
 /// The palette in `slickbi_spec::Theme::light`, as RGBA with full opacity.
+///
+/// This is the Okabe–Ito colourblind-safe categorical palette. It must stay identical to the
+/// theme's palette; a test below fails if the two drift.
 const PALETTE: [[f32; 4]; 8] = [
-    [0.043, 0.431, 0.6, 1.0],
-    [0.761, 0.255, 0.047, 1.0],
-    [0.302, 0.486, 0.059, 1.0],
-    [0.486, 0.227, 0.929, 1.0],
-    [0.631, 0.404, 0.027, 1.0],
-    [0.059, 0.463, 0.431, 1.0],
-    [0.745, 0.071, 0.235, 1.0],
-    [0.263, 0.22, 0.792, 1.0],
+    [0.0, 0.4471, 0.6980, 1.0],    // #0072b2 blue
+    [0.9020, 0.6235, 0.0, 1.0],    // #e69f00 orange
+    [0.0, 0.6196, 0.4510, 1.0],    // #009e73 bluish green
+    [0.8, 0.4745, 0.6549, 1.0],    // #cc79a7 reddish purple
+    [0.8353, 0.3686, 0.0, 1.0],    // #d55e00 vermillion
+    [0.3373, 0.7059, 0.9137, 1.0], // #56b4e9 sky blue
+    [0.9412, 0.8941, 0.2588, 1.0], // #f0e442 yellow
+    [0.6, 0.6, 0.6, 1.0],          // #999999 grey
 ];
 
 /// The vertical space reserved above the plot for a legend, in points.
@@ -1553,5 +1556,24 @@ mod tests {
             texts.iter().any(|text| text.contains(',')),
             "ticks group thousands: {texts:?}"
         );
+    }
+
+    #[test]
+    fn the_palette_matches_the_light_theme() {
+        let theme = slickbi_spec::Theme::light();
+        assert_eq!(theme.palette.len(), PALETTE.len());
+        for (colour, hex) in PALETTE.iter().zip(&theme.palette) {
+            let digits = hex.trim_start_matches('#');
+            let channel = |range: std::ops::Range<usize>| {
+                u8::from_str_radix(&digits[range], 16).expect("hex digit") as f32
+            };
+            let expected = [channel(0..2), channel(2..4), channel(4..6)];
+            for (index, want) in expected.iter().enumerate() {
+                assert!(
+                    (colour[index] * 255.0 - want).abs() < 1.5,
+                    "{hex} channel {index} drifted from the theme palette"
+                );
+            }
+        }
     }
 }
