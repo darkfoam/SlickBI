@@ -826,6 +826,17 @@
           "$ref": "#/$defs/FilterOp",
           "description": "How to test it."
         },
+        "parameter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ParamId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A parameter whose current value is used instead of `values`, for a one-value operator.\n\nBinding a filter to a parameter is how an author offers a control that re-renders the\nchart without editing the filter."
+        },
         "values": {
           "description": "The comparison values. Interpretation depends on [`FilterOp`]: none for null tests, one\nfor comparison, two for `between`, many for `in` and `not_in`.",
           "items": {
@@ -1182,6 +1193,39 @@
           "type": "object"
         }
       ]
+    },
+    "ParamId": {
+      "description": "Identifies a parameter.",
+      "type": "string"
+    },
+    "Parameter": {
+      "additionalProperties": false,
+      "description": "A named value the author can change without editing a calculation or a filter.\n\nA calculation refers to it as `[Name]`, and a filter may bind to it instead of holding a\nliteral. The value is part of the workbook, so changing it re-renders every worksheet that\nreads it.",
+      "properties": {
+        "data_type": {
+          "$ref": "#/$defs/DataType",
+          "description": "The type the value is compared and calculated as."
+        },
+        "id": {
+          "$ref": "#/$defs/ParamId",
+          "description": "Identifier of this parameter."
+        },
+        "name": {
+          "description": "The name used inside brackets and in the parameter list.",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/Scalar",
+          "description": "The current value."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "data_type",
+        "value"
+      ],
+      "type": "object"
     },
     "Rect": {
       "additionalProperties": false,
@@ -2049,6 +2093,13 @@
       "description": "Semantic models.",
       "items": {
         "$ref": "#/$defs/DataModel"
+      },
+      "type": "array"
+    },
+    "parameters": {
+      "description": "Named values that calculations and filters can read.",
+      "items": {
+        "$ref": "#/$defs/Parameter"
       },
       "type": "array"
     },

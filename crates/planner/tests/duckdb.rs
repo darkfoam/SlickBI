@@ -12,8 +12,8 @@ use slickbi_model::Model;
 use slickbi_planner::{ChannelKind, Dialect, PlanError, PlanOptions, plan};
 use slickbi_spec::{
     Agg, Channel, Column, ColumnId, DataModel, DataModelId, DataType, Encoding, Field, FieldId,
-    FieldSource, Filter, FilterOp, Mark, Role, Scalar, SortKey, Table, TableId, Transform,
-    Worksheet, WorksheetId,
+    FieldSource, Filter, FilterOp, Mark, ParamId, Parameter, Role, Scalar, SortKey, Table, TableId,
+    Transform, Worksheet, WorksheetId,
 };
 
 fn model() -> Model {
@@ -148,6 +148,7 @@ fn filter(field: &str, op: FilterOp, values: Vec<Scalar>) -> Filter {
         field: FieldId::new(field),
         op,
         values,
+        parameter: None,
     }
 }
 
@@ -531,4 +532,48 @@ fn an_incompatible_filter_value_is_rejected() {
     };
     let error = plan(&model, &worksheet, &PlanOptions::default()).expect_err("must fail");
     assert!(matches!(error, PlanError::IncompatibleFilterValue { .. }));
+}
+
+#[test]
+fn a_filter_can_bind_to_a_parameter() {
+    let model = model();
+    let parameter = Parameter {
+        id: ParamId::new("param_1"),
+        name: "Region".into(),
+        data_type: DataType::Text,
+        value: Scalar::Text("EMEA".into()),
+    };
+    let worksheet = Worksheet {
+        encoding: Encoding {
+            x: Some(channel("region", Agg::None)),
+            y: Some(channel("revenue", Agg::Sum)),
+            ..Encoding::default()
+        },
+        filters: vec![Filter {
+            field: FieldId::new("region"),
+            op: FilterOp::Equal,
+            values: Vec::new(),
+            parameter: Some(ParamId::new("param_1")),
+        }],
+        ..worksheet("bound_filter")
+    };
+    let options = PlanOptions {
+        parameters: vec![parameter],
+        ..PlanOptions::default()
+    };
+
+    let query = plan(&model, &worksheet, &options).expect("plans");
+    assert!(query.sql.contains("= ?"), "sql: {}", query.sql);
+    assert_eq!(query.params, vec![ParamValue::Text("EMEA".into())]);
+
+    let unknown = plan(&model, &worksheet, &PlanOptions::default()).expect_err("no parameter");
+    assert!(matches!(unknown, PlanError::UnknownParameter { .. }));
+
+    let mut between = worksheet.clone();
+    between.filters[0].op = FilterOp::Between;
+    let error = plan(&model, &between, &options).expect_err("between is not a single value");
+    assert!(matches!(
+        error,
+        PlanError::UnsupportedParameterFilter { .. }
+    ));
 }

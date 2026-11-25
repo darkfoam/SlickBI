@@ -4,9 +4,10 @@ use std::collections::BTreeMap;
 
 use slickbi_spec::{
     Agg, Canvas, Channel, ChartElement, Column, Connection, ConnectionKind, DataModel, DataType,
-    Element, ElementId, ElementKind, Encoding, Field, FieldSource, Mark, Overrides, Rect, Report,
-    ReportId, ReportTarget, Role, Table, TextAlign, TextElement, Theme, ValidationError, Workbook,
-    WorkbookId, WorkbookMeta, Worksheet, WorksheetId,
+    Element, ElementId, ElementKind, Encoding, Field, FieldSource, Filter, FilterOp, Mark,
+    Overrides, ParamId, Parameter, Rect, Report, ReportId, ReportTarget, Role, Scalar, Table,
+    TextAlign, TextElement, Theme, ValidationError, Workbook, WorkbookId, WorkbookMeta, Worksheet,
+    WorksheetId,
 };
 
 fn column(id: &str, data_type: DataType) -> Column {
@@ -173,6 +174,7 @@ pub fn sample_workbook() -> Workbook {
         models: vec![model],
         worksheets,
         reports: vec![report],
+        parameters: vec![],
         theme: Some(Theme::light()),
     }
 }
@@ -359,4 +361,80 @@ fn the_committed_schema_matches_the_generated_one() {
         serde_json::from_str(&std::fs::read_to_string(path).expect("the schema file is committed"))
             .expect("the schema file is JSON");
     assert_eq!(committed, slickbi_spec::workbook_schema());
+}
+
+#[test]
+fn a_parameter_and_a_filter_binding_round_trip() {
+    let parameter = Parameter {
+        id: ParamId::new("param_1"),
+        name: "Region".into(),
+        data_type: DataType::Text,
+        value: Scalar::Text("EMEA".into()),
+    };
+    let mut book = sample_workbook();
+    book.parameters.push(parameter.clone());
+
+    let json = serde_json::to_string(&book).expect("serialize");
+    let back: Workbook = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(back.parameters, vec![parameter]);
+
+    let filter = Filter {
+        field: "region".into(),
+        op: FilterOp::Equal,
+        values: vec![],
+        parameter: Some(ParamId::new("param_1")),
+    };
+    let json = serde_json::to_string(&filter).expect("serialize");
+    let back: Filter = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(back, filter);
+}
+
+#[test]
+fn a_filter_must_bind_an_existing_parameter() {
+    let mut book = sample_workbook();
+    let field = book.worksheets[0]
+        .encoding
+        .x
+        .as_ref()
+        .or(book.worksheets[0].encoding.y.as_ref())
+        .expect("the sample has a field")
+        .field
+        .clone();
+    book.worksheets[0].filters.push(Filter {
+        field,
+        op: FilterOp::Equal,
+        values: vec![],
+        parameter: Some(ParamId::new("missing")),
+    });
+    let error = book
+        .validate()
+        .expect_err("an unknown parameter is refused");
+    assert!(matches!(error, ValidationError::UnknownParameter { .. }));
+
+    book.parameters.push(Parameter {
+        id: ParamId::new("param_1"),
+        name: "Region".into(),
+        data_type: DataType::Text,
+        value: Scalar::Text("EMEA".into()),
+    });
+    book.worksheets[0].filters[0].parameter = Some(ParamId::new("param_1"));
+    book.validate().expect("the binding now resolves");
+}
+
+#[test]
+fn duplicate_parameter_names_are_rejected() {
+    let mut book = sample_workbook();
+    for id in ["param_1", "param_2"] {
+        book.parameters.push(Parameter {
+            id: ParamId::new(id),
+            name: "Rate".into(),
+            data_type: DataType::Number,
+            value: Scalar::Number(1.0),
+        });
+    }
+    let error = book.validate().expect_err("a duplicate name is refused");
+    assert!(matches!(
+        error,
+        ValidationError::DuplicateParameterName { .. }
+    ));
 }

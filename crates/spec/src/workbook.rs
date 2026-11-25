@@ -6,9 +6,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::chart::Worksheet;
-use crate::ids::{FieldId, WorkbookId, WorksheetId};
-use crate::model::{Connection, DataModel, FieldSource};
+use crate::chart::{Scalar, Worksheet};
+use crate::ids::{FieldId, ParamId, WorkbookId, WorksheetId};
+use crate::model::{Connection, DataModel, DataType, FieldSource};
 use crate::report::Report;
 
 /// The workbook format this build reads and writes.
@@ -90,6 +90,24 @@ impl Theme {
     }
 }
 
+/// A named value the author can change without editing a calculation or a filter.
+///
+/// A calculation refers to it as `[Name]`, and a filter may bind to it instead of holding a
+/// literal. The value is part of the workbook, so changing it re-renders every worksheet that
+/// reads it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Parameter {
+    /// Identifier of this parameter.
+    pub id: ParamId,
+    /// The name used inside brackets and in the parameter list.
+    pub name: String,
+    /// The type the value is compared and calculated as.
+    pub data_type: DataType,
+    /// The current value.
+    pub value: Scalar,
+}
+
 /// A complete workbook: the single source of truth for everything the application shows.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -112,6 +130,9 @@ pub struct Workbook {
     /// Composed documents.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reports: Vec<Report>,
+    /// Named values that calculations and filters can read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<Parameter>,
     /// The default theme.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<Theme>,
@@ -128,6 +149,7 @@ impl Workbook {
             models: Vec::new(),
             worksheets: Vec::new(),
             reports: Vec::new(),
+            parameters: Vec::new(),
             theme: Some(Theme::light()),
         }
     }
@@ -187,6 +209,27 @@ impl Workbook {
         ensure_ids("model", self.models.iter().map(|m| m.id.as_str()))?;
         ensure_ids("worksheet", self.worksheets.iter().map(|w| w.id.as_str()))?;
         ensure_ids("report", self.reports.iter().map(|r| r.id.as_str()))?;
+        ensure_ids("parameter", self.parameters.iter().map(|p| p.id.as_str()))?;
+
+        let mut parameter_names = HashSet::new();
+        for parameter in &self.parameters {
+            if parameter.name.trim().is_empty() {
+                return Err(ValidationError::EmptyName {
+                    entity: "parameter",
+                    id: parameter.id.to_string(),
+                });
+            }
+            if !parameter_names.insert(parameter.name.as_str()) {
+                return Err(ValidationError::DuplicateParameterName {
+                    name: parameter.name.clone(),
+                });
+            }
+        }
+        let parameter_ids: HashSet<&str> = self
+            .parameters
+            .iter()
+            .map(|parameter| parameter.id.as_str())
+            .collect();
 
         for model in &self.models {
             self.validate_model(model)?;
@@ -229,6 +272,14 @@ impl Workbook {
                     return Err(ValidationError::UnknownField {
                         worksheet: worksheet.id.to_string(),
                         field: filter.field.to_string(),
+                    });
+                }
+                if let Some(parameter) = &filter.parameter
+                    && !parameter_ids.contains(parameter.as_str())
+                {
+                    return Err(ValidationError::UnknownParameter {
+                        worksheet: worksheet.id.to_string(),
+                        parameter: parameter.to_string(),
                     });
                 }
             }
@@ -490,6 +541,20 @@ pub enum ValidationError {
         report: String,
         /// The element.
         element: String,
+    },
+    /// Two parameters share a name.
+    #[error("two parameters are named '{name}'; parameter names must be unique")]
+    DuplicateParameterName {
+        /// The shared name.
+        name: String,
+    },
+    /// A worksheet filter binds a parameter that does not exist.
+    #[error("worksheet '{worksheet}' binds parameter '{parameter}', which does not exist")]
+    UnknownParameter {
+        /// The worksheet.
+        worksheet: String,
+        /// The missing parameter.
+        parameter: String,
     },
 }
 

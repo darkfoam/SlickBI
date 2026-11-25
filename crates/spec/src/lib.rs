@@ -48,5 +48,6 @@ pub use report::{
     PageSize, Rect, Report, ReportTarget, TextAlign, TextElement,
 };
 pub use workbook::{
-    FORMAT_VERSION, FormatError, Theme, ValidationError, Workbook, WorkbookMeta, workbook_schema,
+    FORMAT_VERSION, FormatError, Parameter, Theme, ValidationError, Workbook, WorkbookMeta,
+    workbook_schema,
 };

@@ -16,8 +16,8 @@ use slickbi_planner::{PlanOptions, plan};
 use slickbi_scene::{Margins, Scene, SceneOptions, SceneSpec, build};
 use slickbi_spec::{
     Agg, Channel, Connection, ConnectionId, DataModelId, DataType, Field, FieldFormat, FieldId,
-    FieldSource, Filter, FilterOp, Mark, Report, Role, Scalar, SortKey, Workbook, Worksheet,
-    WorksheetId,
+    FieldSource, Filter, FilterOp, Mark, ParamId, Parameter, Report, Role, Scalar, SortKey,
+    Workbook, Worksheet, WorksheetId,
 };
 use slickbi_workbook::Scz;
 use thiserror::Error;
@@ -577,6 +577,21 @@ impl Session {
             field: field.clone(),
             op,
             values,
+            parameter: None,
+        });
+        self.refresh();
+    }
+
+    /// Adds a filter bound to a parameter to the active worksheet and rebuilds.
+    pub fn add_parameter_filter(&mut self, field: &FieldId, op: FilterOp, parameter: &ParamId) {
+        let Some(worksheet) = self.workbook.worksheets.get_mut(self.active) else {
+            return;
+        };
+        worksheet.filters.push(Filter {
+            field: field.clone(),
+            op,
+            values: Vec::new(),
+            parameter: Some(parameter.clone()),
         });
         self.refresh();
     }
@@ -616,11 +631,12 @@ impl Session {
             });
         };
 
-        let resolved =
-            Model::resolve(model).map_err(|e| slickbi_calc::CalcError::UnknownFunction {
+        let resolved = Model::resolve_with(model, &self.workbook.parameters).map_err(|e| {
+            slickbi_calc::CalcError::UnknownFunction {
                 name: e.to_string(),
                 span: slickbi_calc::Span::new(0, 0),
-            })?;
+            }
+        })?;
         let compiled = slickbi_calc::compile(expression, &resolved)?;
         let data_type = compiled.value_type.data_type().unwrap_or(DataType::Number);
         let role = match data_type {
@@ -854,6 +870,191 @@ impl Session {
         }
         model.fields.swap(position, group[target as usize]);
         self.refresh();
+    }
+
+    /// The workbook's parameters.
+    pub fn parameters(&self) -> &[Parameter] {
+        &self.workbook.parameters
+    }
+
+    /// The name of a parameter, if it exists.
+    pub fn parameter_name(&self, id: &ParamId) -> Option<&str> {
+        self.workbook
+            .parameters
+            .iter()
+            .find(|parameter| &parameter.id == id)
+            .map(|parameter| parameter.name.as_str())
+    }
+
+    /// Adds a parameter and returns its identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::EmptyParameterName`], [`SessionError::DuplicateParameterName`],
+    /// [`SessionError::ParameterNameConflict`] or [`SessionError::ParameterValueType`].
+    pub fn add_parameter(
+        &mut self,
+        name: &str,
+        data_type: DataType,
+        value: Scalar,
+    ) -> Result<ParamId, SessionError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(SessionError::EmptyParameterName);
+        }
+        self.check_parameter_name(name, None)?;
+        let value = coerce_parameter_value(data_type, value)?;
+        let id = self.unique_parameter_id();
+        self.workbook.parameters.push(Parameter {
+            id: id.clone(),
+            name: name.to_owned(),
+            data_type,
+            value,
+        });
+        self.refresh();
+        Ok(id)
+    }
+
+    /// Changes a parameter's name, type and value, rewriting calculation references when the name
+    /// changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns the name and value errors of [`Session::add_parameter`], and
+    /// [`SessionError::UnknownParameter`] when the id is not in the workbook.
+    pub fn update_parameter(
+        &mut self,
+        id: &ParamId,
+        name: &str,
+        data_type: DataType,
+        value: Scalar,
+    ) -> Result<(), SessionError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(SessionError::EmptyParameterName);
+        }
+        self.check_parameter_name(name, Some(id))?;
+        let value = coerce_parameter_value(data_type, value)?;
+        let Some(parameter) = self
+            .workbook
+            .parameters
+            .iter_mut()
+            .find(|parameter| &parameter.id == id)
+        else {
+            return Err(SessionError::UnknownParameter(id.clone()));
+        };
+        let old = parameter.name.clone();
+        parameter.name = name.to_owned();
+        parameter.data_type = data_type;
+        parameter.value = value;
+        if old != name {
+            for model in &mut self.workbook.models {
+                for field in &mut model.fields {
+                    if let FieldSource::Expression { expression } = &mut field.source {
+                        *expression = rewrite_field_reference(expression, &old, name);
+                    }
+                }
+            }
+        }
+        self.refresh();
+        Ok(())
+    }
+
+    /// Changes a parameter's value and re-renders.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::UnknownParameter`] or [`SessionError::ParameterValueType`].
+    pub fn set_parameter_value(&mut self, id: &ParamId, value: Scalar) -> Result<(), SessionError> {
+        let Some(parameter) = self
+            .workbook
+            .parameters
+            .iter_mut()
+            .find(|parameter| &parameter.id == id)
+        else {
+            return Err(SessionError::UnknownParameter(id.clone()));
+        };
+        parameter.value = coerce_parameter_value(parameter.data_type, value)?;
+        self.refresh();
+        Ok(())
+    }
+
+    /// Removes a parameter that no calculation or filter uses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::ParameterInUse`] when a calculation references it by name or a
+    /// filter is bound to it, and [`SessionError::UnknownParameter`] when it is absent.
+    pub fn remove_parameter(&mut self, id: &ParamId) -> Result<(), SessionError> {
+        let Some(parameter) = self
+            .workbook
+            .parameters
+            .iter()
+            .find(|parameter| &parameter.id == id)
+            .cloned()
+        else {
+            return Err(SessionError::UnknownParameter(id.clone()));
+        };
+        let used_by_calculation = self.workbook.models.iter().any(|model| {
+            model.fields.iter().any(|field| {
+                matches!(&field.source, FieldSource::Expression { expression }
+                    if expression_uses(expression, &parameter.name))
+            })
+        });
+        let used_by_filter = self.workbook.worksheets.iter().any(|worksheet| {
+            worksheet
+                .filters
+                .iter()
+                .any(|filter| filter.parameter.as_ref() == Some(id))
+        });
+        if used_by_calculation || used_by_filter {
+            return Err(SessionError::ParameterInUse(parameter.name));
+        }
+        self.workbook
+            .parameters
+            .retain(|parameter| &parameter.id != id);
+        self.refresh();
+        Ok(())
+    }
+
+    fn unique_parameter_id(&self) -> ParamId {
+        let mut index = 1;
+        loop {
+            let id = ParamId::new(format!("param_{index}"));
+            if !self
+                .workbook
+                .parameters
+                .iter()
+                .any(|parameter| parameter.id == id)
+            {
+                return id;
+            }
+            index += 1;
+        }
+    }
+
+    fn check_parameter_name(
+        &self,
+        name: &str,
+        except: Option<&ParamId>,
+    ) -> Result<(), SessionError> {
+        if self
+            .workbook
+            .parameters
+            .iter()
+            .any(|parameter| Some(&parameter.id) != except && parameter.name == name)
+        {
+            return Err(SessionError::DuplicateParameterName(name.to_owned()));
+        }
+        if self
+            .workbook
+            .models
+            .iter()
+            .any(|model| model.fields.iter().any(|field| field.name == name))
+        {
+            return Err(SessionError::ParameterNameConflict(name.to_owned()));
+        }
+        Ok(())
     }
 
     /// The description of a field, if any.
@@ -1193,10 +1394,18 @@ impl Session {
         else {
             return Err(SessionError::NoWorksheet);
         };
-        let model = Model::resolve(document)?;
-        let query = plan(&model, &worksheet, &PlanOptions::default())?;
+        let model = Model::resolve_with(document, &self.workbook.parameters)?;
+        let query = plan(&model, &worksheet, &self.plan_options())?;
         let result = self.engine.execute(&query.sql, &query.params)?;
         Ok((query, result.batches))
+    }
+
+    /// The plan options that carry the workbook's current parameter values.
+    fn plan_options(&self) -> PlanOptions {
+        PlanOptions {
+            parameters: self.workbook.parameters.clone(),
+            ..PlanOptions::default()
+        }
     }
 
     fn default_agg(&self, field: &FieldId) -> Agg {
@@ -1254,8 +1463,9 @@ impl Session {
             .iter()
             .find(|m| m.id == worksheet.model)
             .ok_or_else(|| "the worksheet's model is missing".to_owned())?;
-        let model = Model::resolve(document).map_err(|e| e.to_string())?;
-        let query = plan(&model, &worksheet, &PlanOptions::default()).map_err(|e| e.to_string())?;
+        let model =
+            Model::resolve_with(document, &self.workbook.parameters).map_err(|e| e.to_string())?;
+        let query = plan(&model, &worksheet, &self.plan_options()).map_err(|e| e.to_string())?;
         let result = self
             .engine
             .execute(&query.sql, &query.params)
@@ -1340,6 +1550,87 @@ impl Drop for Session {
             std::fs::remove_file(path).ok();
         }
     }
+}
+
+/// Coerces a value to the parameter's declared type.
+fn coerce_parameter_value(data_type: DataType, value: Scalar) -> Result<Scalar, SessionError> {
+    let mismatch = || SessionError::ParameterValueType { data_type };
+    match data_type {
+        DataType::Integer => match value {
+            Scalar::Integer(_) => Ok(value),
+            Scalar::Number(number) => Ok(Scalar::Integer(number.round() as i64)),
+            _ => Err(mismatch()),
+        },
+        DataType::Number => match value {
+            Scalar::Number(_) => Ok(value),
+            Scalar::Integer(number) => Ok(Scalar::Number(number as f64)),
+            _ => Err(mismatch()),
+        },
+        DataType::Boolean => match value {
+            Scalar::Boolean(_) => Ok(value),
+            Scalar::Text(text) => match text.to_ascii_lowercase().as_str() {
+                "true" | "t" | "yes" | "1" => Ok(Scalar::Boolean(true)),
+                "false" | "f" | "no" | "0" => Ok(Scalar::Boolean(false)),
+                _ => Err(mismatch()),
+            },
+            _ => Err(mismatch()),
+        },
+        DataType::Text | DataType::Date | DataType::Timestamp | DataType::Unknown => match value {
+            Scalar::Text(_) => Ok(value),
+            Scalar::Integer(number) => Ok(Scalar::Text(number.to_string())),
+            Scalar::Number(number) => Ok(Scalar::Text(number.to_string())),
+            Scalar::Boolean(boolean) => Ok(Scalar::Text(boolean.to_string())),
+        },
+    }
+}
+
+/// Whether a calculation reads `[name]`.
+fn expression_uses(expression: &str, name: &str) -> bool {
+    let characters: Vec<char> = expression.chars().collect();
+    let mut index = 0usize;
+    while index < characters.len() {
+        match characters[index] {
+            '\'' => {
+                index += 1;
+                while index < characters.len() {
+                    let character = characters[index];
+                    index += 1;
+                    if character == '\'' {
+                        if index < characters.len() && characters[index] == '\'' {
+                            index += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            '[' => {
+                let mut field = String::new();
+                index += 1;
+                let mut closed = false;
+                while index < characters.len() {
+                    if characters[index] == ']' {
+                        if index + 1 < characters.len() && characters[index + 1] == ']' {
+                            field.push(']');
+                            index += 2;
+                        } else {
+                            index += 1;
+                            closed = true;
+                            break;
+                        }
+                    } else {
+                        field.push(characters[index]);
+                        index += 1;
+                    }
+                }
+                if closed && field.trim() == name {
+                    return true;
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    false
 }
 
 /// Rewrites `[old]` field references in a calculation, leaving text literals and escaped `]]`
@@ -1538,6 +1829,27 @@ pub enum SessionError {
     /// The file extension is not a source this build reads.
     #[error("unsupported file type: {0}")]
     UnsupportedSource(String),
+    /// A parameter name was blank.
+    #[error("a parameter name cannot be empty")]
+    EmptyParameterName,
+    /// Another parameter already uses this name.
+    #[error("a parameter named '{0}' already exists")]
+    DuplicateParameterName(String),
+    /// A field already uses this name.
+    #[error("a field is already named '{0}'; use a different parameter name")]
+    ParameterNameConflict(String),
+    /// The value does not fit the parameter's declared type.
+    #[error("the value does not fit a {data_type:?} parameter")]
+    ParameterValueType {
+        /// The declared type.
+        data_type: DataType,
+    },
+    /// A calculation or filter still reads the parameter.
+    #[error("parameter '{0}' is used by a calculation or filter; unbind it first")]
+    ParameterInUse(String),
+    /// The parameter is not in the workbook.
+    #[error("the parameter is not in the workbook")]
+    UnknownParameter(ParamId),
 }
 
 #[cfg(test)]
@@ -1698,6 +2010,60 @@ mod tests {
 
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(&scz).ok();
+    }
+
+    #[test]
+    fn a_parameter_drives_a_filter_and_a_calculation() {
+        let (mut session, path) = loaded();
+        let minimum = session
+            .add_parameter("Minimum amount", DataType::Number, Scalar::Number(5.0))
+            .expect("adds a parameter");
+        session.add_parameter_filter(&FieldId::new("amount"), FilterOp::GreaterOrEqual, &minimum);
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+
+        let bars = |session: &Session| -> usize {
+            match &session
+                .scene()
+                .unwrap_or_else(|| panic!("scene: {:?}", session.error()))
+                .series[0]
+                .kind
+            {
+                slickbi_scene::SeriesKind::Bars(bars) => bars.len(),
+                _ => 0,
+            }
+        };
+        assert_eq!(bars(&session), 1, "only the EMEA row over 5 remains");
+        session
+            .set_parameter_value(&minimum, Scalar::Number(1.0))
+            .expect("moves the parameter");
+        assert_eq!(bars(&session), 2, "both regions now pass");
+
+        let rate = session
+            .add_parameter("Rate", DataType::Number, Scalar::Number(2.0))
+            .expect("adds a second parameter");
+        session
+            .add_calculated_field("Scaled", "[amount] * [Rate]")
+            .expect("a calculation reads the parameter");
+        session.assign(Shelf::Y, &FieldId::new("Scaled"));
+        assert!(
+            session.scene().is_some(),
+            "the calculation resolves: {:?}",
+            session.error()
+        );
+        session
+            .set_parameter_value(&rate, Scalar::Number(3.0))
+            .expect("moves the calculation parameter");
+
+        assert!(matches!(
+            session.remove_parameter(&minimum),
+            Err(SessionError::ParameterInUse(_))
+        ));
+        session.remove_filter(0);
+        session
+            .remove_parameter(&minimum)
+            .expect("removes an unused parameter");
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

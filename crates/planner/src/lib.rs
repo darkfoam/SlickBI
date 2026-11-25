@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use slickbi_calc::{ParamValue, ValueType};
 use slickbi_model::{Model, ResolvedField, ResolvedTable};
 use slickbi_spec::{Agg, Channel, Encoding, Filter, FilterOp, Scalar, SortKey, Transform};
-use slickbi_spec::{DataType, FieldFormat, FieldId, TableId, Worksheet};
+use slickbi_spec::{DataType, FieldFormat, FieldId, ParamId, TableId, Worksheet};
 use thiserror::Error;
 
 /// The SQL dialect a query is written in.
@@ -92,20 +92,24 @@ pub struct Query {
     pub dialect: Dialect,
 }
 
-/// Options that do not change what the worksheet means, only how much is read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Options that do not change what the worksheet means, only how much is read and which parameter
+/// values are bound.
+#[derive(Debug, Clone, PartialEq)]
 pub struct PlanOptions {
     /// The most rows an unaggregated query returns when the worksheet sets no limit of its own.
     ///
     /// A raw dump of a large table would otherwise hand every row to the renderer. Aggregated
     /// queries are already bounded by their number of groups and are not capped here.
     pub preview_row_cap: u32,
+    /// The workbook's parameters, so a filter bound to one uses its current value.
+    pub parameters: Vec<slickbi_spec::Parameter>,
 }
 
 impl Default for PlanOptions {
     fn default() -> Self {
         PlanOptions {
             preview_row_cap: 10_000,
+            parameters: Vec::new(),
         }
     }
 }
@@ -187,11 +191,21 @@ pub fn plan(
 
     let mut where_predicates = Vec::new();
     for (filter, field) in &where_filters {
-        where_predicates.push(filter_predicate(filter, field, &mut select.params)?);
+        where_predicates.push(filter_predicate(
+            filter,
+            field,
+            &options.parameters,
+            &mut select.params,
+        )?);
     }
     let mut having_predicates = Vec::new();
     for (filter, field) in &having_filters {
-        having_predicates.push(filter_predicate(filter, field, &mut select.params)?);
+        having_predicates.push(filter_predicate(
+            filter,
+            field,
+            &options.parameters,
+            &mut select.params,
+        )?);
     }
 
     let order = order_by(model, worksheet, &select.items, &mut select.params)?;
@@ -490,8 +504,20 @@ struct SelectItem {
 fn filter_predicate(
     filter: &Filter,
     field: &ResolvedField,
+    parameters: &[slickbi_spec::Parameter],
     params: &mut Vec<ParamValue>,
 ) -> Result<String, PlanError> {
+    let parameter = match &filter.parameter {
+        Some(id) => Some(
+            parameters
+                .iter()
+                .find(|parameter| &parameter.id == id)
+                .ok_or_else(|| PlanError::UnknownParameter {
+                    parameter: id.clone(),
+                })?,
+        ),
+        None => None,
+    };
     let sql = field.sql();
     let value_type = field.value_type();
 
@@ -508,6 +534,31 @@ fn filter_predicate(
         }
     };
 
+    // A filter bound to a parameter carries no literal values; its one value is the parameter's.
+    let single_value = |expect: &dyn Fn(usize) -> Result<(), PlanError>| -> Result<&slickbi_spec::Scalar, PlanError> {
+        match parameter {
+            Some(parameter) => {
+                if !filter.values.is_empty() {
+                    return Err(PlanError::ParameterWithValues {
+                        field: filter.field.clone(),
+                        op: filter.op,
+                    });
+                }
+                Ok(&parameter.value)
+            }
+            None => {
+                expect(1)?;
+                Ok(&filter.values[0])
+            }
+        }
+    };
+
+    let multi_value_refusal =
+        |parameter: &slickbi_spec::Parameter| PlanError::UnsupportedParameterFilter {
+            parameter: parameter.id.clone(),
+            op: filter.op,
+        };
+
     let predicate = match filter.op {
         FilterOp::Equal
         | FilterOp::NotEqual
@@ -515,8 +566,8 @@ fn filter_predicate(
         | FilterOp::LessOrEqual
         | FilterOp::Greater
         | FilterOp::GreaterOrEqual => {
-            expect(1)?;
-            let (value, bound) = bound_value(field, &filter.values[0], filter)?;
+            let value = single_value(&expect)?;
+            let (value, bound) = bound_value(field, value, filter)?;
             let operator = match filter.op {
                 FilterOp::Equal => "=",
                 FilterOp::NotEqual => "<>",
@@ -529,6 +580,9 @@ fn filter_predicate(
             format!("({sql} {operator} {bound})")
         }
         FilterOp::In | FilterOp::NotIn => {
+            if let Some(parameter) = parameter {
+                return Err(multi_value_refusal(parameter));
+            }
             if filter.values.is_empty() {
                 return Err(PlanError::EmptyFilterValues {
                     field: filter.field.clone(),
@@ -549,6 +603,9 @@ fn filter_predicate(
             format!("({sql} {keyword} ({}))", bound.join(", "))
         }
         FilterOp::Between => {
+            if let Some(parameter) = parameter {
+                return Err(multi_value_refusal(parameter));
+            }
             expect(2)?;
             let (low, low_text) = bound_value(field, &filter.values[0], filter)?;
             let (high, high_text) = bound_value(field, &filter.values[1], filter)?;
@@ -557,21 +614,21 @@ fn filter_predicate(
             format!("({sql} BETWEEN {low_text} AND {high_text})")
         }
         FilterOp::Contains | FilterOp::StartsWith | FilterOp::EndsWith => {
-            expect(1)?;
+            let value = single_value(&expect)?;
             if value_type != ValueType::Text {
                 return Err(PlanError::IncompatibleFilterValue {
                     field: filter.field.clone(),
                     op: filter.op,
                     field_type: value_type,
-                    value_type: scalar_type(&filter.values[0]),
+                    value_type: scalar_type(value),
                 });
             }
-            let Scalar::Text(text) = &filter.values[0] else {
+            let slickbi_spec::Scalar::Text(text) = value else {
                 return Err(PlanError::IncompatibleFilterValue {
                     field: filter.field.clone(),
                     op: filter.op,
                     field_type: value_type,
-                    value_type: scalar_type(&filter.values[0]),
+                    value_type: scalar_type(value),
                 });
             };
             let function = match filter.op {
@@ -583,6 +640,9 @@ fn filter_predicate(
             format!("{function}({sql}, ?)")
         }
         FilterOp::IsNull | FilterOp::IsNotNull => {
+            if let Some(parameter) = parameter {
+                return Err(multi_value_refusal(parameter));
+            }
             expect(0)?;
             let operator = if filter.op == FilterOp::IsNull {
                 "IS NULL"
@@ -799,5 +859,29 @@ pub enum PlanError {
         field_type: ValueType,
         /// The value's type.
         value_type: ValueType,
+    },
+    /// A filter names a parameter the workbook does not contain.
+    #[error(
+        "the worksheet's filter uses parameter '{parameter}', which the workbook does not have"
+    )]
+    UnknownParameter {
+        /// The parameter as referenced.
+        parameter: ParamId,
+    },
+    /// A filter binds a parameter to an operator that needs more than one value.
+    #[error("filter operator {op:?} cannot be bound to parameter '{parameter}'")]
+    UnsupportedParameterFilter {
+        /// The parameter.
+        parameter: ParamId,
+        /// The operator.
+        op: FilterOp,
+    },
+    /// A filter bound to a parameter also holds literal values.
+    #[error("filter on field '{field}' is bound to a parameter and must not also list values")]
+    ParameterWithValues {
+        /// The field.
+        field: FieldId,
+        /// The operator.
+        op: FilterOp,
     },
 }

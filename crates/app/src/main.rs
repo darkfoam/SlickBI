@@ -9,7 +9,7 @@ use eframe::egui;
 use slickbi_app::{FieldInfo, Session, Shelf};
 use slickbi_connectors::DatabaseKind;
 use slickbi_scene::{Bar, LEGEND_HEIGHT, Scene, SeriesKind, TITLE_SPACE};
-use slickbi_spec::{Agg, Channel, DataType, FieldId, FilterOp, Mark, Role, Scalar};
+use slickbi_spec::{Agg, Channel, DataType, FieldId, FilterOp, Mark, ParamId, Role, Scalar};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -80,6 +80,7 @@ struct SlickBiApp {
     filter_field: Option<FieldId>,
     filter_op: FilterOp,
     filter_value: String,
+    filter_parameter: Option<ParamId>,
 
     renaming: Option<(usize, String)>,
     pending_delete: Option<(usize, Vec<String>)>,
@@ -109,6 +110,13 @@ struct SlickBiApp {
     folder_field: Option<FieldId>,
     folder_text: String,
     show_hidden: bool,
+
+    parameters_open: bool,
+    parameter_editing: Option<ParamId>,
+    parameter_name: String,
+    parameter_type: DataType,
+    parameter_value: String,
+    parameter_error: Option<String>,
 }
 
 impl SlickBiApp {
@@ -130,6 +138,7 @@ impl SlickBiApp {
             filter_field: None,
             filter_op: FilterOp::Equal,
             filter_value: String::new(),
+            filter_parameter: None,
             renaming: None,
             pending_delete: None,
             format_field: None,
@@ -154,6 +163,12 @@ impl SlickBiApp {
             folder_field: None,
             folder_text: String::new(),
             show_hidden: false,
+            parameters_open: false,
+            parameter_editing: None,
+            parameter_name: String::new(),
+            parameter_type: DataType::Number,
+            parameter_value: String::new(),
+            parameter_error: None,
         }
     }
 
@@ -439,11 +454,16 @@ impl SlickBiApp {
         self.field_section(ui, "Measures", &measures);
 
         ui.add_space(10.0);
-        if ui.button("ƒ  New calculation").clicked() {
-            self.calc_open = true;
-            self.calc_error = None;
-            self.calc_span = None;
-        }
+        ui.horizontal(|ui| {
+            if ui.button("ƒ  New calculation").clicked() {
+                self.calc_open = true;
+                self.calc_error = None;
+                self.calc_span = None;
+            }
+            if ui.button("Parameters…").clicked() {
+                self.open_parameters();
+            }
+        });
     }
 
     /// One role's fields, with unfiled fields first and each folder as a collapsible section.
@@ -708,6 +728,7 @@ impl SlickBiApp {
                 if ui.small_button("＋").clicked() {
                     self.filter_open = true;
                     self.filter_value.clear();
+                    self.filter_parameter = None;
                     if self.filter_field.is_none() {
                         self.filter_field = self
                             .session
@@ -732,13 +753,15 @@ impl SlickBiApp {
                 let name = self
                     .field_name(&filter.field)
                     .unwrap_or_else(|| filter.field.to_string());
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{name} {}",
-                        describe_filter(&filter.op, &filter.values)
-                    ))
-                    .small(),
-                );
+                let detail = match &filter.parameter {
+                    Some(id) => self
+                        .session
+                        .parameter_name(id)
+                        .map(|name| format!("[{name}]"))
+                        .unwrap_or_else(|| "[missing parameter]".to_owned()),
+                    None => describe_filter(&filter.op, &filter.values),
+                };
+                ui.label(egui::RichText::new(format!("{name} {detail}")).small());
                 if ui.small_button("×").clicked() {
                     self.session.remove_filter(index);
                 }
@@ -1529,19 +1552,63 @@ impl SlickBiApp {
                         }
                     });
 
-                ui.add_space(6.0);
-                ui.label(egui::RichText::new("Value").small().weak());
-                ui.text_edit_singleline(&mut self.filter_value);
+                let parameter_ok = op_accepts_parameter(self.filter_op);
+                if !parameter_ok {
+                    self.filter_parameter = None;
+                }
+                if parameter_ok {
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new("Value source").small().weak());
+                    let selected = self
+                        .filter_parameter
+                        .as_ref()
+                        .and_then(|id| self.session.parameter_name(id))
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| "Literal".to_owned());
+                    let parameters = self.session.parameters().to_vec();
+                    egui::ComboBox::from_id_salt("filter-parameter")
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(self.filter_parameter.is_none(), "Literal")
+                                .clicked()
+                            {
+                                self.filter_parameter = None;
+                            }
+                            for parameter in &parameters {
+                                if ui
+                                    .selectable_label(
+                                        self.filter_parameter.as_ref() == Some(&parameter.id),
+                                        &parameter.name,
+                                    )
+                                    .clicked()
+                                {
+                                    self.filter_parameter = Some(parameter.id.clone());
+                                }
+                            }
+                        });
+                }
+                if self.filter_parameter.is_none() {
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new("Value").small().weak());
+                    ui.text_edit_singleline(&mut self.filter_value);
+                }
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Apply").clicked()
                         && let Some(field) = self.filter_field.clone()
                     {
-                        let values = parse_value(&self.filter_value);
-                        if !values.is_empty() || self.filter_op == FilterOp::IsNull {
-                            self.session.add_filter(&field, self.filter_op, values);
+                        if let Some(parameter) = self.filter_parameter.clone() {
+                            self.session
+                                .add_parameter_filter(&field, self.filter_op, &parameter);
                             self.filter_open = false;
+                        } else {
+                            let values = parse_value(&self.filter_value);
+                            if !values.is_empty() || self.filter_op == FilterOp::IsNull {
+                                self.session.add_filter(&field, self.filter_op, values);
+                                self.filter_open = false;
+                            }
                         }
                     }
                     if ui.button("Cancel").clicked() {
@@ -1550,6 +1617,134 @@ impl SlickBiApp {
                 });
             });
         self.filter_open = open;
+    }
+
+    fn parameters_window(&mut self, ctx: &egui::Context) {
+        if !self.parameters_open {
+            return;
+        }
+        let mut open = self.parameters_open;
+        let parameters = self.session.parameters().to_vec();
+        egui::Window::new("Parameters")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                if parameters.is_empty() {
+                    ui.label(egui::RichText::new("No parameters yet.").weak().small());
+                }
+                for parameter in &parameters {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} ({})",
+                                parameter.name,
+                                data_type_label(parameter.data_type)
+                            ))
+                            .strong(),
+                        );
+                        ui.label(
+                            egui::RichText::new(parameter_text(&parameter.value))
+                                .weak()
+                                .small(),
+                        );
+                        if ui.small_button("Edit").clicked() {
+                            self.parameter_editing = Some(parameter.id.clone());
+                            self.parameter_name = parameter.name.clone();
+                            self.parameter_type = parameter.data_type;
+                            self.parameter_value = parameter_text(&parameter.value);
+                            self.parameter_error = None;
+                        }
+                        if ui.small_button("Remove").clicked() {
+                            match self.session.remove_parameter(&parameter.id) {
+                                Ok(()) => self.parameter_error = None,
+                                Err(error) => self.parameter_error = Some(error.to_string()),
+                            }
+                        }
+                    });
+                }
+
+                ui.separator();
+                let heading = if self.parameter_editing.is_some() {
+                    "Edit parameter"
+                } else {
+                    "New parameter"
+                };
+                ui.label(egui::RichText::new(heading).strong());
+                ui.label(egui::RichText::new("Name").small().weak());
+                ui.text_edit_singleline(&mut self.parameter_name);
+                ui.label(egui::RichText::new("Type").small().weak());
+                egui::ComboBox::from_id_salt("parameter-type")
+                    .selected_text(data_type_label(self.parameter_type))
+                    .show_ui(ui, |ui| {
+                        for data_type in [
+                            DataType::Integer,
+                            DataType::Number,
+                            DataType::Text,
+                            DataType::Boolean,
+                            DataType::Date,
+                            DataType::Timestamp,
+                        ] {
+                            ui.selectable_value(
+                                &mut self.parameter_type,
+                                data_type,
+                                data_type_label(data_type),
+                            );
+                        }
+                    });
+                ui.label(egui::RichText::new("Value").small().weak());
+                ui.text_edit_singleline(&mut self.parameter_value);
+                if let Some(error) = &self.parameter_error {
+                    ui.add_space(4.0);
+                    ui.colored_label(egui::Color32::from_rgb(0xB0, 0x30, 0x20), error);
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        let Some(value) =
+                            parse_parameter_value(self.parameter_type, &self.parameter_value)
+                        else {
+                            self.parameter_error =
+                                Some("the value does not fit the chosen type".to_owned());
+                            return;
+                        };
+                        let result = match self.parameter_editing.clone() {
+                            Some(id) => self.session.update_parameter(
+                                &id,
+                                &self.parameter_name,
+                                self.parameter_type,
+                                value,
+                            ),
+                            None => self
+                                .session
+                                .add_parameter(&self.parameter_name, self.parameter_type, value)
+                                .map(|_| ()),
+                        };
+                        match result {
+                            Ok(()) => self.reset_parameter_editor(),
+                            Err(error) => self.parameter_error = Some(error.to_string()),
+                        }
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.reset_parameter_editor();
+                    }
+                });
+            });
+        self.parameters_open = open;
+    }
+
+    fn open_parameters(&mut self) {
+        self.parameters_open = true;
+        self.reset_parameter_editor();
+    }
+
+    fn reset_parameter_editor(&mut self) {
+        self.parameter_editing = None;
+        self.parameter_name.clear();
+        self.parameter_type = DataType::Number;
+        self.parameter_value.clear();
+        self.parameter_error = None;
     }
 
     fn format_window(&mut self, ctx: &egui::Context) {
@@ -2065,6 +2260,7 @@ impl eframe::App for SlickBiApp {
         self.sheet_window(ui.ctx());
         self.rename_window(ui.ctx());
         self.folder_window(ui.ctx());
+        self.parameters_window(ui.ctx());
         self.description_window(ui.ctx());
     }
 }
@@ -2292,6 +2488,58 @@ fn parse_value(text: &str) -> Vec<Scalar> {
         return vec![Scalar::Integer(integer)];
     }
     vec![Scalar::Text(trimmed.to_owned())]
+}
+
+fn op_accepts_parameter(op: FilterOp) -> bool {
+    matches!(
+        op,
+        FilterOp::Equal
+            | FilterOp::NotEqual
+            | FilterOp::Less
+            | FilterOp::LessOrEqual
+            | FilterOp::Greater
+            | FilterOp::GreaterOrEqual
+            | FilterOp::Contains
+            | FilterOp::StartsWith
+            | FilterOp::EndsWith
+    )
+}
+
+fn data_type_label(data_type: DataType) -> &'static str {
+    match data_type {
+        DataType::Integer => "Integer",
+        DataType::Number => "Number",
+        DataType::Text => "Text",
+        DataType::Boolean => "Boolean",
+        DataType::Date => "Date",
+        DataType::Timestamp => "Timestamp",
+        DataType::Unknown => "Unknown",
+    }
+}
+
+fn parameter_text(value: &Scalar) -> String {
+    match value {
+        Scalar::Boolean(value) => value.to_string(),
+        Scalar::Integer(value) => value.to_string(),
+        Scalar::Number(value) => value.to_string(),
+        Scalar::Text(value) => value.clone(),
+    }
+}
+
+fn parse_parameter_value(data_type: DataType, text: &str) -> Option<Scalar> {
+    let text = text.trim();
+    match data_type {
+        DataType::Integer => text.parse::<i64>().ok().map(Scalar::Integer),
+        DataType::Number => text.parse::<f64>().ok().map(Scalar::Number),
+        DataType::Boolean => match text.to_ascii_lowercase().as_str() {
+            "true" | "t" | "yes" | "1" => Some(Scalar::Boolean(true)),
+            "false" | "f" | "no" | "0" => Some(Scalar::Boolean(false)),
+            _ => None,
+        },
+        DataType::Text | DataType::Date | DataType::Timestamp | DataType::Unknown => {
+            (!text.is_empty()).then(|| Scalar::Text(text.to_owned()))
+        }
+    }
 }
 
 fn draw_scene(ui: &mut egui::Ui, scene: &Scene) {

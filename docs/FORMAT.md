@@ -83,6 +83,13 @@ A `DataModel` holds `tables` (each with `columns`, a name, a classified type and
   pattern, or `text` with a character cap).
 - `hidden` and `description` are presentation metadata; neither changes a query.
 
+### Parameters
+
+A workbook may declare `parameters`: objects with an `id`, a `name`, a `data_type` and a current
+`value` (a tagged scalar). A calculation refers to one as `[Name]`; a filter may set `parameter`
+to its id instead of listing literal values. Changing a parameter re-renders every worksheet that
+reads it.
+
 ### Worksheets
 
 A `Worksheet` owns what a chart **measures** and is never edited by a report:

@@ -8,7 +8,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{DataModelId, FieldId, ScaleId, WorksheetId};
+use crate::ids::{DataModelId, FieldId, ParamId, ScaleId, WorksheetId};
 
 /// The shape drawn for each group of values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -226,6 +226,12 @@ pub struct Filter {
     /// for comparison, two for `between`, many for `in` and `not_in`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<Scalar>,
+    /// A parameter whose current value is used instead of `values`, for a one-value operator.
+    ///
+    /// Binding a filter to a parameter is how an author offers a control that re-renders the
+    /// chart without editing the filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameter: Option<ParamId>,
 }
 
 /// How a numeric or temporal axis is mapped.

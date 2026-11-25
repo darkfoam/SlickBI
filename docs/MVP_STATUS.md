@@ -30,7 +30,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **51 MVP-scope features**: **45 done, 1 partial, 5 not started**.
+At the snapshot, of the **51 MVP-scope features**: **46 done, 1 partial, 4 not started**.
 
 ---
 
@@ -67,7 +67,7 @@ At the snapshot, of the **51 MVP-scope features**: **45 done, 1 partial, 5 not s
 |---|---|---|---|---|
 | C01 | Arithmetic, comparison, IF/CASE, text, date | **Done** | `slickbi-calc` lexer/parser/typing/lowering | — |
 | C02 | Aggregations incl. distinct/median | **Done** | `Agg` → SQL; engine tests | — |
-| C03 | Parameters in calculations and filters | **Not started** | No `Parameter` in the document, no filter binding, no calc references. **MVP-06 depends on this** | L |
+| C03 | Parameters in calculations and filters | **Done** | `Workbook.parameters`, `[Name]` in calculations, filter binding, editor | — |
 | C04 | Type checking with inline, spanning errors | **Done** | The calculation editor highlights the offending span | — |
 
 ### Charts and worksheets
@@ -128,7 +128,7 @@ At the snapshot, of the **51 MVP-scope features**: **45 done, 1 partial, 5 not s
 | 03 | Rows/cols chart == hand-written GROUP BY | **Met** | golden SQL + engine tests |
 | 04 | Sum→Avg == AVG | **Met** | `changing_the_aggregation_changes_the_values` |
 | 05 | Filter totals == WHERE | **Met** | filter tests + golden SQL |
-| 06 | Parameter bound to filter re-renders | **Not met** | C03 missing |
+| 06 | Parameter bound to filter re-renders | **Met** | C03: parameter list, `[Name]` in calculations, filter binding |
 | 07 | Divide-by-zero calc: null semantics, editor warns | **Partial** | SQL null behaviour holds; editor does not surface the risk |
 | 08 | Type error inline at span, not saved | **Met** | Inline span highlight; invalid expressions are not added |
 | 09 | Rename updates report panel + used-in | **Met** | name read live |
@@ -144,7 +144,7 @@ At the snapshot, of the **51 MVP-scope features**: **45 done, 1 partial, 5 not s
 | 19 | 8 h soak, < 10 % memory growth | **Not met** | No soak test |
 | 20 | JSON Schema validates app output, zero errors | **Met** | `jsonschema` validates the serialised workbook; schema file cannot drift |
 
-Counts: **Met 10 · Partial 6 · Not met 4.**
+Counts: **Met 11 · Partial 5 · Not met 4.**
 
 ---
 
@@ -199,8 +199,7 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
       ticks on line, area and point charts; bars and pies keep date categories. **S**
 
 ### Phase 3 — analytical core
-- [ ] **C03 parameters** — `Workbook.parameters`, filter binding, calc references, UI, planner
-      binding. Unblocks **MVP-06**. **L**
+- [x] **C03 parameters** — `Workbook.parameters`, `[Name]` in calculations, filter binding, UI. **L**
 - [x] **C04 inline span errors** — highlight the offending range in the calc editor. **M**
 - [x] **M03 remainder** — type override; date formatting and date dimensions. **M**
 

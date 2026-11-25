@@ -98,6 +98,7 @@ pub struct Model {
     name: String,
     tables: Vec<ResolvedTable>,
     fields: Vec<ResolvedField>,
+    parameters: Vec<FieldBinding>,
     by_name: BTreeMap<String, usize>,
 }
 
@@ -110,6 +111,22 @@ impl Model {
     /// fields share a name, when a calculation is invalid, when calculated fields refer to each
     /// other in a cycle, or when a calculation's type contradicts its declaration.
     pub fn resolve(model: &DataModel) -> Result<Model, ModelError> {
+        Self::resolve_with(model, &[])
+    }
+
+    /// Resolves every field, with named parameters available to calculations as `[Name]`.
+    ///
+    /// A parameter lowers to one `?` placeholder carrying its current value, so changing the
+    /// value changes the compiled SQL's parameters, not its text.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Model::resolve`], plus
+    /// [`ModelError::DuplicateParameterName`] and [`ModelError::ParameterNameConflict`].
+    pub fn resolve_with(
+        model: &DataModel,
+        parameters: &[slickbi_spec::Parameter],
+    ) -> Result<Model, ModelError> {
         let tables = resolve_tables(model)?;
         let table_index: BTreeMap<&str, &ResolvedTable> = tables
             .iter()
@@ -124,6 +141,22 @@ impl Model {
                 });
             }
         }
+
+        let mut parameter_names = BTreeSet::new();
+        for parameter in parameters {
+            if !parameter_names.insert(parameter.name.as_str()) {
+                return Err(ModelError::DuplicateParameterName {
+                    name: parameter.name.clone(),
+                });
+            }
+            if seen.contains(parameter.name.as_str()) {
+                return Err(ModelError::ParameterNameConflict {
+                    name: parameter.name.clone(),
+                });
+            }
+        }
+        let parameter_bindings: Vec<FieldBinding> =
+            parameters.iter().map(parameter_binding).collect();
 
         let mut resolved: Vec<Option<ResolvedField>> = vec![None; model.fields.len()];
 
@@ -174,7 +207,7 @@ impl Model {
             }
         }
 
-        resolve_expressions(model, &table_index, &mut resolved)?;
+        resolve_expressions(model, &table_index, &parameter_bindings, &mut resolved)?;
 
         let fields: Vec<ResolvedField> = resolved
             .into_iter()
@@ -192,6 +225,7 @@ impl Model {
             name: model.name.clone(),
             tables,
             fields,
+            parameters: parameter_bindings,
             by_name,
         })
     }
@@ -234,7 +268,10 @@ impl Model {
 
 impl FieldResolver for Model {
     fn resolve_field(&self, name: &str) -> Option<&FieldBinding> {
-        self.field_by_name(name).map(|field| &field.binding)
+        self.parameters
+            .iter()
+            .find(|binding| binding.name == name)
+            .or_else(|| self.field_by_name(name).map(|field| &field.binding))
     }
 }
 
@@ -242,6 +279,7 @@ impl FieldResolver for Model {
 fn resolve_expressions(
     model: &DataModel,
     tables: &BTreeMap<&str, &ResolvedTable>,
+    parameters: &[FieldBinding],
     resolved: &mut [Option<ResolvedField>],
 ) -> Result<(), ModelError> {
     let mut pending: Vec<usize> = model
@@ -268,7 +306,7 @@ fn resolve_expressions(
             };
 
             let known: Vec<ResolvedField> = resolved.iter().flatten().cloned().collect();
-            match compile_expression(field, expression, &known, tables) {
+            match compile_expression(field, expression, &known, parameters, tables) {
                 Ok(resolved_field) => {
                     resolved[index] = Some(resolved_field);
                     progressed = true;
@@ -301,6 +339,7 @@ fn compile_expression(
     field: &Field,
     source: &str,
     known: &[ResolvedField],
+    parameters: &[FieldBinding],
     tables: &BTreeMap<&str, &ResolvedTable>,
 ) -> Result<ResolvedField, ModelError> {
     let expression_error = |source: CalcError| ModelError::Expression {
@@ -308,15 +347,25 @@ fn compile_expression(
         source,
     };
 
-    let resolver = KnownFields(known);
+    let resolver = KnownBindings {
+        parameters,
+        fields: known,
+    };
     let compiled: Compiled = slickbi_calc::compile(source, &resolver).map_err(expression_error)?;
     let parsed = slickbi_calc::parse(source).map_err(expression_error)?;
 
     let mut referenced = Vec::new();
     collect_references(&parsed, &mut referenced);
 
+    let parameter_names: BTreeSet<&str> = parameters
+        .iter()
+        .map(|binding| binding.name.as_str())
+        .collect();
     let mut used_tables = BTreeSet::new();
     for name in referenced {
+        if parameter_names.contains(name.as_str()) {
+            continue;
+        }
         let referenced_field = known
             .iter()
             .find(|candidate| candidate.binding.name == name);
@@ -552,14 +601,52 @@ fn calc_span(expr: &slickbi_calc::Expr, name: &str) -> slickbi_calc::Span {
 }
 
 /// Resolves names against fields that are already resolved.
-struct KnownFields<'a>(&'a [ResolvedField]);
+struct KnownBindings<'a> {
+    parameters: &'a [FieldBinding],
+    fields: &'a [ResolvedField],
+}
 
-impl FieldResolver for KnownFields<'_> {
+impl FieldResolver for KnownBindings<'_> {
     fn resolve_field(&self, name: &str) -> Option<&FieldBinding> {
-        self.0
+        self.parameters
             .iter()
-            .find(|field| field.binding.name == name)
-            .map(|field| &field.binding)
+            .find(|binding| binding.name == name)
+            .or_else(|| {
+                self.fields
+                    .iter()
+                    .find(|field| field.binding.name == name)
+                    .map(|field| &field.binding)
+            })
+    }
+}
+
+/// The binding a parameter lowers to: one placeholder and its current value.
+fn parameter_binding(parameter: &slickbi_spec::Parameter) -> FieldBinding {
+    FieldBinding::with_params(
+        parameter.name.clone(),
+        "?",
+        parameter_value_type(parameter.data_type),
+        vec![scalar_param(&parameter.value)],
+    )
+}
+
+fn parameter_value_type(data_type: DataType) -> ValueType {
+    match data_type {
+        DataType::Integer => ValueType::Integer,
+        DataType::Number => ValueType::Number,
+        DataType::Boolean => ValueType::Boolean,
+        DataType::Text | DataType::Date | DataType::Timestamp | DataType::Unknown => {
+            ValueType::Text
+        }
+    }
+}
+
+fn scalar_param(value: &slickbi_spec::Scalar) -> ParamValue {
+    match value {
+        slickbi_spec::Scalar::Boolean(value) => ParamValue::Boolean(*value),
+        slickbi_spec::Scalar::Integer(value) => ParamValue::Integer(*value),
+        slickbi_spec::Scalar::Number(value) => ParamValue::Number(*value),
+        slickbi_spec::Scalar::Text(value) => ParamValue::Text(value.clone()),
     }
 }
 
@@ -629,12 +716,24 @@ pub enum ModelError {
         /// The type the expression produces.
         actual: DataType,
     },
+    /// Two parameters share a name.
+    #[error("two parameters are named '{name}'; parameter names must be unique")]
+    DuplicateParameterName {
+        /// The shared name.
+        name: String,
+    },
+    /// A parameter and a field share a name.
+    #[error("a parameter and a field are both named '{name}'; use a different name")]
+    ParameterNameConflict {
+        /// The shared name.
+        name: String,
+    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use slickbi_spec::{Column, ColumnId, Field};
+    use slickbi_spec::{Column, ColumnId, Field, ParamId, Parameter, Scalar};
 
     fn column(id: &str, name: &str, data_type: DataType) -> Column {
         Column {
@@ -1112,5 +1211,51 @@ mod tests {
         assert_eq!(revenue.value_type(), ValueType::Text);
         assert_eq!(revenue.data_type, DataType::Text);
         assert!(revenue.sql().contains("CAST("), "sql: {}", revenue.sql());
+    }
+
+    #[test]
+    fn a_parameter_lowers_to_a_bound_placeholder() {
+        let mut fields = base_fields();
+        fields.push(calculated(
+            "f_tax",
+            "Tax",
+            "[Revenue] * [Rate]",
+            Role::Measure,
+            DataType::Number,
+        ));
+        let parameter = Parameter {
+            id: ParamId::new("param_1"),
+            name: "Rate".into(),
+            data_type: DataType::Number,
+            value: Scalar::Number(0.2),
+        };
+
+        let model = Model::resolve_with(&document(fields), &[parameter]).expect("resolves");
+        let tax = model.field_by_name("Tax").expect("Tax");
+        assert!(tax.sql().contains('?'), "sql: {}", tax.sql());
+        assert!(tax.sql().contains("\"amount\""), "sql: {}", tax.sql());
+        assert_eq!(tax.params(), &[ParamValue::Number(0.2)]);
+    }
+
+    #[test]
+    fn parameters_cannot_duplicate_each_other_or_a_field() {
+        let fields = base_fields();
+        let parameter = |name: &str| Parameter {
+            id: ParamId::new(format!("param_{name}")),
+            name: name.into(),
+            data_type: DataType::Number,
+            value: Scalar::Number(1.0),
+        };
+
+        let error = Model::resolve_with(
+            &document(fields.clone()),
+            &[parameter("Rate"), parameter("Rate")],
+        )
+        .expect_err("a duplicate parameter is refused");
+        assert!(matches!(error, ModelError::DuplicateParameterName { .. }));
+
+        let error = Model::resolve_with(&document(fields), &[parameter("Region")])
+            .expect_err("a parameter shadows a field");
+        assert!(matches!(error, ModelError::ParameterNameConflict { .. }));
     }
 }

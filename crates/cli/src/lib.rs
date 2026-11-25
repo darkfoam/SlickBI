@@ -64,7 +64,7 @@ pub fn compile(path: &Path, worksheet: Option<&str>) -> Result<String, CliError>
     let mut out = String::new();
     for worksheet in worksheets {
         let model = model_for(workbook, worksheet)?;
-        let query = plan(&model, worksheet, &PlanOptions::default())?;
+        let query = plan(&model, worksheet, &plan_options(workbook))?;
         out.push_str(&format!("-- {}\n", worksheet.name));
         out.push_str(&query.sql);
         out.push_str("\n\n");
@@ -131,7 +131,7 @@ pub fn query(path: &Path, worksheet: &str, format: OutputFormat) -> Result<Strin
     let engine = Engine::open()?;
     let temp_files = register_extracts(&engine, &scz)?;
 
-    let query = plan(&model, worksheet, &PlanOptions::default())?;
+    let query = plan(&model, worksheet, &plan_options(workbook))?;
     let result = engine.execute(&query.sql, &query.params)?;
 
     for path in temp_files {
@@ -236,7 +236,7 @@ fn scene_for(
     options: slickbi_scene::SceneOptions,
 ) -> Result<Scene, CliError> {
     let model = model_for(workbook, worksheet)?;
-    let query = plan(&model, worksheet, &PlanOptions::default())?;
+    let query = plan(&model, worksheet, &plan_options(workbook))?;
     let result = engine.execute(&query.sql, &query.params)?;
     let spec = slickbi_scene::SceneSpec {
         mark: worksheet.mark,
@@ -470,7 +470,15 @@ fn model_for(workbook: &Workbook, worksheet: &slickbi_spec::Worksheet) -> Result
         .iter()
         .find(|m| m.id == worksheet.model)
         .ok_or_else(|| CliError::ModelNotFound(worksheet.model.to_string()))?;
-    Ok(Model::resolve(document)?)
+    Ok(Model::resolve_with(document, &workbook.parameters)?)
+}
+
+/// The plan options that carry the workbook's parameter values.
+fn plan_options(workbook: &Workbook) -> PlanOptions {
+    PlanOptions {
+        parameters: workbook.parameters.clone(),
+        ..PlanOptions::default()
+    }
 }
 
 fn ensure_extracts(scz: &Scz, model: &Model) -> Result<(), CliError> {

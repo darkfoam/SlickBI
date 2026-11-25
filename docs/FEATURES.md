@@ -64,7 +64,7 @@ that needs different data is a forked worksheet.
 |---|---|---|---|---|
 | C01 | Arithmetic, comparison, `IF`/`CASE`, text and date functions | F | 0.0.3 | done |
 | C02 | Aggregations, including distinct count and median | F | 0.0.3 | done |
-| C03 | Parameters, usable in calculations and filters | F | 0.0.3 | planned |
+| C03 | Parameters, usable in calculations and filters | F | 0.0.3 | done |
 | C04 | Type checking with inline, spanning error messages | F | 0.0.3 | done |
 | C05 | Window and table calculations | F | 0.1.0 | planned |
 | C06 | Level-of-detail expressions | F | 0.1.0 | planned |
