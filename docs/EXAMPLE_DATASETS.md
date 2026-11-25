@@ -28,6 +28,43 @@ multi-table; no example may require a join until relationships land in 0.2.0. Wh
 wants several tables (DS11), the 0.0.3 build ships a denormalised preview and the normalised
 version is the 0.2.0 flagship.
 
+## Generating, storing and showing progress
+
+Examples are generated once and kept on disk. Generation, the first read of a large file and the
+first query are all long-running actions, and the app must treat them as such rather than freezing
+a window with no explanation.
+
+- **Choose where to store.** The first time an example needs generated data, prompt for a folder,
+  show the approximate size, and offer a sensible default (the app’s data folder or
+  `<Documents>/SlickBI Examples`). Remember the choice per installation and per example. Never
+  write outside the chosen folder without consent; show the path and offer “Open folder”.
+- **Generate once, read later.** Write the data (CSV/Parquet/SQLite), the manifest and the
+  checksums to the chosen folder. Opening the example again reads the saved files; it does not
+  regenerate. If a checksum or the manifest version does not match, say so and offer
+  “Regenerate”. Provide “Delete generated data” as well.
+- **Atomic writes.** Write to a temporary file and rename only when the file is complete and its
+  checksum passed. A failed generation must never leave a partial file that looks usable. Check
+  free disk space before starting.
+- **A live progress window.** Any action that can take more than a moment — generating rows,
+  writing a file, reading a large file, planning or running the first query, rendering a report —
+  shows a non-modal status window with a specific, updating message:
+  - the stage (“Preparing”, “Generating rows”, “Writing Parquet”, “Reading the file”, “Planning
+    the chart”, “Querying”, “Rendering the report”);
+  - current and total rows or bytes, elapsed time, and the destination path where relevant;
+  - a progress bar when a total is known, and a spinner otherwise;
+  - a Cancel button for generation and queries;
+  - a success state with the file path and a “Show details” log, or a clear error with the same;
+  - updates at least every 200 ms; the window never becomes a frozen “not responding” shell.
+- **Responsive by construction.** The work runs off the UI thread (or on a worker with progress
+  messages), so a slow example never blocks typing, scrolling or the window itself. A modal is
+  reserved for a decision the user must make (such as choosing the folder), never for waiting.
+- **One mechanism everywhere.** The same status window covers the onboarding sample, example
+  downloads, large CSV imports, first queries and report rendering, so testers always know whether
+  the app is working or stuck.
+
+This is a prerequisite for the example gallery and for outside testers; the current app runs these
+steps synchronously and reports many failures only to stderr.
+
 ## Rules for every dataset
 
 - **Synthetic, but tangible.** Values are generated, never copied. The generator models
@@ -421,6 +458,8 @@ scatter, route table, a carrier parameter, cross-filter on an airport.
 | Text search / sentiment analysis | DS12, DS13 verbatims | **Not in MVP; sentiment is precomputed, text shown in tables** |
 | Broken-file recovery UX | DS02 | **Error is surfaced; GUI error surface/logging needs work** |
 | 10M playable workbooks | DS12–DS15 | **Use 1M deterministic samples for the `.scz`; full data separate** |
+| Folder prompt + persistent generated-data cache | All | **Not built** |
+| Live progress/status window for long actions | All | **Not built** |
 
 ### The one hard blocker
 
@@ -461,6 +500,9 @@ acceptance and distribution gaps matter for outside play.
 - A build testers can install without `cargo`: at least a macOS `.app`/DMG, and Windows/Linux if
   the invite includes them. The 0.0.3 release plan currently says installers are not in this
   release; for an external alpha that has to change.
+- The folder prompt, persistent generated-data cache and live progress window described above:
+  generated examples are stored on disk for fast reuse, and slow generation/reading/querying
+  shows a specific, updating status instead of a frozen window.
 - A visible error surface and a “Copy diagnostics” action (version, commit, OS, log path); today
   many errors go to stderr, which a GUI tester never sees.
 - A feedback channel and a known-issues page: no undo/redo, no autosave, no PDF/SVG export,
