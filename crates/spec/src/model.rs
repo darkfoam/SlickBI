@@ -73,6 +73,10 @@ pub enum ConnectionKind {
     Csv,
     /// An Excel workbook.
     Excel,
+    /// An OpenDocument spreadsheet.
+    OpenDocument,
+    /// An Apple Numbers document.
+    Numbers,
     /// A Parquet file.
     Parquet,
     /// A JSON or newline-delimited JSON file.

@@ -6,9 +6,9 @@
 //! typed table: the driver returns every column as text, and the column's declared type decides
 //! how the text is parsed.
 //!
-//! Reading every column as text keeps one code path across SQLite, PostgreSQL and MySQL, and keeps
-//! NULL distinct from the empty string. Date and timestamp columns are stored as text for now,
-//! which is a deliberate MVP limitation until date axes exist.
+//! Reading every column as text keeps one code path across SQLite, PostgreSQL and MySQL, and
+//! keeps NULL distinct from the empty string. Date and timestamp columns are parsed back into
+//! real engine dates and timestamps, so they can drive a continuous time axis.
 
 use std::collections::HashSet;
 
@@ -19,6 +19,7 @@ use slickbi_spec::{
 };
 
 use super::{ConnectorError, TABLE_NAME, infer_role, unique_field_id};
+use crate::temporal::{parse_date, parse_timestamp};
 
 /// A database kind this build can read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,6 +195,10 @@ fn map_type(kind: DatabaseKind, type_name: &str) -> (StorageType, DataType) {
                 || name.contains("num")
             {
                 (StorageType::Double, DataType::Number)
+            } else if name.contains("timestamp") || name.contains("datetime") {
+                (StorageType::Timestamp, DataType::Timestamp)
+            } else if name.contains("date") {
+                (StorageType::Date, DataType::Date)
             } else {
                 (StorageType::VarChar, DataType::Text)
             }
@@ -211,6 +216,10 @@ fn map_type(kind: DatabaseKind, type_name: &str) -> (StorageType, DataType) {
                 (StorageType::Double, DataType::Number)
             } else if matches!(name.as_str(), "boolean" | "bool") {
                 (StorageType::Boolean, DataType::Boolean)
+            } else if name == "date" {
+                (StorageType::Date, DataType::Date)
+            } else if name == "timestamp" || name == "timestamp without time zone" {
+                (StorageType::Timestamp, DataType::Timestamp)
             } else {
                 (StorageType::VarChar, DataType::Text)
             }
@@ -225,6 +234,10 @@ fn map_type(kind: DatabaseKind, type_name: &str) -> (StorageType, DataType) {
                 (StorageType::Double, DataType::Number)
             } else if name == "bit" {
                 (StorageType::Boolean, DataType::Boolean)
+            } else if name == "date" {
+                (StorageType::Date, DataType::Date)
+            } else if matches!(name.as_str(), "datetime" | "timestamp") {
+                (StorageType::Timestamp, DataType::Timestamp)
             } else {
                 (StorageType::VarChar, DataType::Text)
             }
@@ -259,6 +272,10 @@ fn parse_cell(storage: StorageType, value: Option<String>) -> Cell {
             _ => Cell::Null,
         },
         StorageType::VarChar => Cell::Text(value),
+        StorageType::Date => parse_date(&value).map(Cell::Date).unwrap_or(Cell::Null),
+        StorageType::Timestamp => parse_timestamp(&value)
+            .map(Cell::Timestamp)
+            .unwrap_or(Cell::Null),
     }
 }
 
@@ -609,6 +626,43 @@ mod tests {
             .expect("region field");
         assert_eq!(region.data_type, DataType::Text);
         assert_eq!(region.role, Role::Dimension);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_sqlite_date_column_is_read_as_a_date() {
+        let path = temp_db("date");
+        {
+            let connection = rusqlite::Connection::open(&path).expect("opens");
+            connection
+                .execute_batch(
+                    "CREATE TABLE sales (day DATE, amount INTEGER);
+                     INSERT INTO sales VALUES ('2025-01-01', 10), ('2025-02-01', 5);",
+                )
+                .expect("seeds");
+        }
+
+        let table = read_database(&sqlite_source(&path)).expect("reads");
+        assert_eq!(table.columns[0], ("day".to_owned(), StorageType::Date));
+        assert_eq!(table.rows[0][0], Cell::Date(20_089));
+        assert_eq!(table.model.fields[0].data_type, DataType::Date);
+        assert_eq!(table.model.fields[0].role, Role::Dimension);
+
+        let engine = slickbi_engine::Engine::open().expect("opens");
+        engine
+            .register_rows(TABLE_NAME, &table.columns, &table.rows)
+            .expect("registers");
+        let result = engine
+            .execute("SELECT day FROM data ORDER BY day", &[])
+            .expect("queries");
+        let days = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<slickbi_engine::arrow::array::Date32Array>()
+            .expect("a date column");
+        assert_eq!(days.value(0), 20_089);
+        assert_eq!(days.value(1), 20_120);
 
         std::fs::remove_file(&path).ok();
     }

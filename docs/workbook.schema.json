@@ -296,6 +296,16 @@
           "type": "string"
         },
         {
+          "const": "open_document",
+          "description": "An OpenDocument spreadsheet.",
+          "type": "string"
+        },
+        {
+          "const": "numbers",
+          "description": "An Apple Numbers document.",
+          "type": "string"
+        },
+        {
           "const": "parquet",
           "description": "A Parquet file.",
           "type": "string"

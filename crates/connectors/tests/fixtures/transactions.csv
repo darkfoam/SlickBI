@@ -1,0 +1,4 @@
+Account,Description,Day,Type,Amount,Balance,Derived,Note
+1001,Coffee shop,01/02/25,Debit,-$4.25,"$1,245.75",$4.25,A-1
+1001,Payroll,01/03/25,Credit,"$2,000.00","$3,245.75","-$2,000.00",B-2
+1001,Rent,01/04/25,Debit,"($1,200.00)","$2,045.75","$1,200.00",C-3

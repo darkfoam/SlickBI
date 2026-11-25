@@ -8,7 +8,6 @@ use std::sync::Arc;
 use eframe::egui;
 use slickbi_app::{Session, Shelf};
 use slickbi_connectors::DatabaseKind;
-use slickbi_engine::SourceFormat;
 use slickbi_scene::{Bar, LEGEND_HEIGHT, Scene, SeriesKind, TITLE_SPACE};
 use slickbi_spec::{Agg, Channel, DataType, FieldId, FilterOp, Mark, Role, Scalar};
 
@@ -58,10 +57,18 @@ enum ElementAction {
     Resize(usize, f64, f64),
 }
 
+/// A spreadsheet waiting for the user to choose one of its sheets.
+struct SheetPick {
+    path: PathBuf,
+    kind: slickbi_connectors::SpreadsheetKind,
+    sheets: Vec<String>,
+}
+
 struct SlickBiApp {
     session: Session,
     mode: Mode,
     path_input: String,
+    sheet_pick: Option<SheetPick>,
 
     calc_open: bool,
     calc_name: String,
@@ -106,6 +113,7 @@ impl SlickBiApp {
             session: Session::new(),
             mode: Mode::Charts,
             path_input: String::new(),
+            sheet_pick: None,
             calc_open: false,
             calc_name: String::new(),
             calc_expr: String::new(),
@@ -137,16 +145,21 @@ impl SlickBiApp {
     }
 
     fn open_path(&mut self, path: PathBuf) {
-        let format = match path.extension().and_then(|e| e.to_str()) {
-            Some("csv") => SourceFormat::Csv,
-            Some("parquet") | Some("pq") => SourceFormat::Parquet,
-            Some("json") | Some("ndjson") | Some("jsonl") => SourceFormat::Json,
-            _ => {
-                eprintln!("unsupported file type: {path:?}");
-                return;
+        if let Some(kind) = slickbi_connectors::SpreadsheetKind::from_path(&path) {
+            match self.session.spreadsheet_sheets(&path, kind) {
+                Ok(sheets) if sheets.len() > 1 => {
+                    self.sheet_pick = Some(SheetPick { path, kind, sheets });
+                }
+                Ok(_) => {
+                    if let Err(error) = self.session.load_spreadsheet(&path, kind) {
+                        eprintln!("failed to load {path:?}: {error}");
+                    }
+                }
+                Err(error) => eprintln!("failed to read {path:?}: {error}"),
             }
-        };
-        if let Err(error) = self.session.load_file(&path, format) {
+            return;
+        }
+        if let Err(error) = self.session.load_path(&path) {
             eprintln!("failed to load {path:?}: {error}");
         }
     }
@@ -158,7 +171,15 @@ impl SlickBiApp {
             ui.add_space(8.0);
 
             if ui.button("Open…").clicked()
-                && let Some(path) = rfd::FileDialog::new().pick_file()
+                && let Some(path) = rfd::FileDialog::new()
+                    .add_filter(
+                        "Data files",
+                        &[
+                            "csv", "tsv", "tab", "parquet", "json", "xlsx", "xlsm", "xlsb", "xls",
+                            "ods", "numbers",
+                        ],
+                    )
+                    .pick_file()
             {
                 self.open_path(path);
             }
@@ -1605,6 +1626,58 @@ impl SlickBiApp {
         }
     }
 
+    /// Lets the user pick a sheet when a spreadsheet has more than one.
+    fn sheet_window(&mut self, ctx: &egui::Context) {
+        let Some(pick) = self.sheet_pick.take() else {
+            return;
+        };
+        let mut open = true;
+        let mut action: Option<Option<String>> = None;
+        egui::Window::new("Choose a sheet")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(280.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} has {} sheets.",
+                        pick.path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| pick.path.display().to_string()),
+                        pick.sheets.len()
+                    ))
+                    .small()
+                    .weak(),
+                );
+                ui.add_space(6.0);
+                for sheet in &pick.sheets {
+                    if ui.button(sheet).clicked() {
+                        action = Some(Some(sheet.clone()));
+                    }
+                }
+                ui.add_space(4.0);
+                if ui.button("Cancel").clicked() {
+                    action = Some(None);
+                }
+            });
+
+        match action {
+            Some(Some(sheet)) => {
+                if let Err(error) =
+                    self.session
+                        .load_spreadsheet_sheet(&pick.path, pick.kind, Some(&sheet))
+                {
+                    eprintln!("failed to load {}: {error}", pick.path.display());
+                }
+            }
+            Some(None) => {}
+            None if open => self.sheet_pick = Some(pick),
+            None => {}
+        }
+    }
+
     fn connect_window(&mut self, ctx: &egui::Context) {
         if !self.connect_open {
             return;
@@ -1803,6 +1876,7 @@ impl eframe::App for SlickBiApp {
         self.delete_window(ui.ctx());
         self.format_window(ui.ctx());
         self.connect_window(ui.ctx());
+        self.sheet_window(ui.ctx());
         self.description_window(ui.ctx());
     }
 }

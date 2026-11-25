@@ -166,9 +166,7 @@ impl Session {
 
     /// Loads a data file: discovers its schema, registers it, and adds a worksheet.
     pub fn load_file(&mut self, path: &Path, format: SourceFormat) -> Result<(), SessionError> {
-        let model = slickbi_connectors::discover(&self.engine, path, format)?;
-        self.engine
-            .register(slickbi_connectors::TABLE_NAME, path, format)?;
+        let model = slickbi_connectors::open_file(&self.engine, path, format)?;
 
         self.workbook.models.push(model);
         self.workbook
@@ -183,6 +181,81 @@ impl Session {
         self.workbook.worksheets.push(worksheet);
         self.active = self.workbook.worksheets.len() - 1;
         self.source = Some((path.to_owned(), format));
+        self.refresh();
+        Ok(())
+    }
+
+    /// Loads any supported source file, choosing the reader by its extension.
+    ///
+    /// CSV, TSV, Parquet and JSON stay live views over the file; a spreadsheet is read through its
+    /// parser and imported as a typed table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::UnsupportedSource`] for an extension this build does not read, or
+    /// the connector error when the file cannot be read.
+    pub fn load_path(&mut self, path: &Path) -> Result<(), SessionError> {
+        if let Some(kind) = slickbi_connectors::SpreadsheetKind::from_path(path) {
+            return self.load_spreadsheet(path, kind);
+        }
+        let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+            return Err(SessionError::UnsupportedSource(String::new()));
+        };
+        let format = match extension.to_ascii_lowercase().as_str() {
+            "csv" | "tsv" | "tab" => SourceFormat::Csv,
+            "parquet" | "pq" => SourceFormat::Parquet,
+            "json" | "ndjson" | "jsonl" => SourceFormat::Json,
+            other => return Err(SessionError::UnsupportedSource(other.to_owned())),
+        };
+        self.load_file(path, format)
+    }
+
+    /// Reads a spreadsheet's first sheet and adds it as a typed table and a worksheet.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Connector`] when the file cannot be read, or
+    /// [`SessionError::Engine`] when the rows cannot be registered.
+    pub fn load_spreadsheet(
+        &mut self,
+        path: &Path,
+        kind: slickbi_connectors::SpreadsheetKind,
+    ) -> Result<(), SessionError> {
+        self.load_spreadsheet_sheet(path, kind, None)
+    }
+
+    /// Reads a named sheet (or the first when `sheet` is `None`) and adds it as a worksheet.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Connector`] when the file or sheet cannot be read, or
+    /// [`SessionError::Engine`] when the rows cannot be registered.
+    pub fn load_spreadsheet_sheet(
+        &mut self,
+        path: &Path,
+        kind: slickbi_connectors::SpreadsheetKind,
+        sheet: Option<&str>,
+    ) -> Result<(), SessionError> {
+        let table = slickbi_connectors::open_spreadsheet(&self.engine, path, kind, sheet)?;
+
+        self.workbook.models.push(table.model);
+        self.workbook.connections.push(Connection {
+            id: ConnectionId::new("c1"),
+            name: format!("{} · {}", kind.label(), table.sheet),
+            kind: kind.connection_kind(),
+            location: path.to_string_lossy().into_owned(),
+            read_only: true,
+            options: [("sheet".to_owned(), table.sheet.clone())].into(),
+        });
+
+        let worksheet = new_worksheet(
+            self.unique_worksheet_id(),
+            format!("Sheet {}", self.workbook.worksheets.len() + 1),
+            DataModelId::new("m1"),
+        );
+        self.workbook.worksheets.push(worksheet);
+        self.active = self.workbook.worksheets.len() - 1;
+        self.source = None;
         self.refresh();
         Ok(())
     }
@@ -247,6 +320,19 @@ impl Session {
     ) -> Result<Vec<String>, SessionError> {
         let source = database_source(kind, location, user, password, "");
         Ok(slickbi_connectors::list_tables(&source)?)
+    }
+
+    /// Lists the sheets or tables a spreadsheet exposes, without importing any of them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Connector`] when the file cannot be read.
+    pub fn spreadsheet_sheets(
+        &self,
+        path: &Path,
+        kind: slickbi_connectors::SpreadsheetKind,
+    ) -> Result<Vec<String>, SessionError> {
+        Ok(slickbi_connectors::spreadsheet_sheets(path, kind)?)
     }
 
     /// Adds a new, empty worksheet and makes it active.
@@ -1222,6 +1308,9 @@ pub enum SessionError {
     /// There is no active worksheet to act on.
     #[error("no worksheet is active")]
     NoWorksheet,
+    /// The file extension is not a source this build reads.
+    #[error("unsupported file type: {0}")]
+    UnsupportedSource(String),
 }
 
 #[cfg(test)]
@@ -1294,6 +1383,47 @@ mod tests {
         ));
 
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn every_fixture_format_charts_a_balance_over_time() {
+        for name in [
+            "transactions.csv",
+            "transactions.tsv",
+            "transactions.xlsx",
+            "transactions.ods",
+            "transactions.numbers",
+        ] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../connectors/tests/fixtures")
+                .join(name);
+            let mut session = Session::new();
+            session
+                .load_path(&path)
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            session.assign(Shelf::X, &FieldId::new("Day"));
+            session.assign(Shelf::Y, &FieldId::new("Balance"));
+            session.set_mark(Mark::Line);
+
+            let scene = session
+                .scene()
+                .unwrap_or_else(|| panic!("{name}: {:?}", session.error()));
+            assert!(!scene.x_axis.categorical, "{name}: a continuous time axis");
+            let ticks: Vec<&str> = scene
+                .x_axis
+                .ticks
+                .iter()
+                .map(|tick| tick.text.as_str())
+                .collect();
+            assert!(
+                ticks.iter().any(|text| text.starts_with("2025-01")),
+                "{name}: date ticks {ticks:?}"
+            );
+            assert!(
+                matches!(scene.series[0].kind, slickbi_scene::SeriesKind::Line(_)),
+                "{name}: a line series"
+            );
+        }
     }
 
     #[test]

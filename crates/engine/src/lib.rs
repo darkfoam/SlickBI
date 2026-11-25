@@ -61,6 +61,10 @@ pub enum StorageType {
     Boolean,
     /// Variable-length text.
     VarChar,
+    /// A calendar date, as days since 1970-01-01.
+    Date,
+    /// A timestamp, as microseconds since 1970-01-01 00:00:00.
+    Timestamp,
 }
 
 impl StorageType {
@@ -70,6 +74,8 @@ impl StorageType {
             StorageType::Double => "DOUBLE",
             StorageType::Boolean => "BOOLEAN",
             StorageType::VarChar => "VARCHAR",
+            StorageType::Date => "DATE",
+            StorageType::Timestamp => "TIMESTAMP",
         }
     }
 }
@@ -87,6 +93,10 @@ pub enum Cell {
     Boolean(bool),
     /// Text.
     Text(String),
+    /// A calendar date, as days since 1970-01-01.
+    Date(i32),
+    /// A timestamp, as microseconds since 1970-01-01 00:00:00.
+    Timestamp(i64),
 }
 
 /// A single embedded DuckDB session.
@@ -124,6 +134,7 @@ impl Engine {
         path: &Path,
         format: SourceFormat,
     ) -> Result<(), EngineError> {
+        self.drop_relation(name)?;
         let function = match format {
             SourceFormat::Csv => "read_csv_auto",
             SourceFormat::Parquet => "read_parquet",
@@ -154,6 +165,7 @@ impl Engine {
         columns: &[(String, StorageType)],
         rows: &[Vec<Cell>],
     ) -> Result<(), EngineError> {
+        self.drop_relation(name)?;
         let definitions = columns
             .iter()
             .map(|(column, storage)| format!("{} {}", quote_ident(column), storage.sql_name()))
@@ -196,6 +208,31 @@ impl Engine {
     /// A handle that cancels the query currently running on this engine.
     pub fn interrupt_handle(&self) -> Cancellation {
         self.connection.interrupt_handle()
+    }
+
+    /// Drops a table or view with this name, whichever it is, so a source can be re-registered
+    /// with a different relation kind.
+    fn drop_relation(&self, name: &str) -> Result<(), EngineError> {
+        let is_view: bool = self.connection.query_row(
+            "SELECT count(*) > 0 FROM duckdb_views() WHERE view_name = ?",
+            duckdb::params![name],
+            |row| row.get(0),
+        )?;
+        if is_view {
+            self.connection
+                .execute(&format!("DROP VIEW {}", quote_ident(name)), [])?;
+            return Ok(());
+        }
+        let is_table: bool = self.connection.query_row(
+            "SELECT count(*) > 0 FROM duckdb_tables() WHERE table_name = ?",
+            duckdb::params![name],
+            |row| row.get(0),
+        )?;
+        if is_table {
+            self.connection
+                .execute(&format!("DROP TABLE {}", quote_ident(name)), [])?;
+        }
+        Ok(())
     }
 
     /// Whether extension auto-install is disabled.
@@ -243,6 +280,10 @@ fn cell_value(cell: &Cell) -> duckdb::types::Value {
         Cell::Number(value) => duckdb::types::Value::Double(*value),
         Cell::Boolean(value) => duckdb::types::Value::Boolean(*value),
         Cell::Text(value) => duckdb::types::Value::Text(value.clone()),
+        Cell::Date(days) => duckdb::types::Value::Date32(*days),
+        Cell::Timestamp(micros) => {
+            duckdb::types::Value::Timestamp(duckdb::types::TimeUnit::Microsecond, *micros)
+        }
     }
 }
 
@@ -342,5 +383,42 @@ mod tests {
             .expect("count");
         assert_eq!(total.value(0), 2);
         assert_eq!(present.value(0), 1);
+    }
+
+    #[test]
+    fn a_date_and_timestamp_keep_their_types() {
+        let engine = Engine::open().expect("opens");
+        engine
+            .register_rows(
+                "d",
+                &[
+                    ("day".to_owned(), StorageType::Date),
+                    ("moment".to_owned(), StorageType::Timestamp),
+                ],
+                &[
+                    vec![Cell::Date(0), Cell::Timestamp(0)],
+                    vec![Cell::Date(1), Cell::Timestamp(86_400_000_000)],
+                ],
+            )
+            .expect("registers rows");
+
+        let result = engine
+            .execute("SELECT day, moment FROM d ORDER BY day", &[])
+            .expect("queries");
+        let batch = &result.batches[0];
+        let days = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<arrow::array::Date32Array>()
+            .expect("date column");
+        assert_eq!(days.value(0), 0);
+        assert_eq!(days.value(1), 1);
+        let ats = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<arrow::array::TimestampMicrosecondArray>()
+            .expect("timestamp column");
+        assert_eq!(ats.value(0), 0);
+        assert_eq!(ats.value(1), 86_400_000_000);
     }
 }

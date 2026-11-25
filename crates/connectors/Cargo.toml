@@ -13,6 +13,8 @@ thiserror.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
 postgres = "0.19"
 mysql = { version = "25", default-features = false, features = ["minimal"] }
+calamine = "0.38"
+iwork = "0.4"
 
 [dev-dependencies]
 arrow.workspace = true
