@@ -236,15 +236,20 @@ fn open_csv(engine: &Engine, path: &Path) -> Result<DataModel, ConnectorError> {
 
     // A textual column is promoted to a number only when every sampled value is a money amount and
     // at least one value carries a currency symbol, a group separator or accounting parentheses.
+    // One sample query for every text column, not one per column: each query re-sniffs the file.
+    let text_columns: Vec<(usize, String)> = model.tables[0]
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(_, column)| matches!(column.data_type, DataType::Text | DataType::Unknown))
+        .map(|(index, column)| (index, column.name.clone()))
+        .collect();
+    let samples = sample_texts(engine, &source, &text_columns)?;
     let mut cleaned = Vec::new();
-    for (index, column) in model.tables[0].columns.iter().enumerate() {
-        if !matches!(column.data_type, DataType::Text | DataType::Unknown) {
-            continue;
-        }
-        let quoted = quote_ident(&column.name);
-        let sample = sample_text(engine, &source, &quoted)?;
-        if let Some(expression) = money_expression(&quoted, &sample) {
-            cleaned.push((index, expression));
+    for ((index, name), sample) in text_columns.iter().zip(samples.iter()) {
+        let quoted = quote_ident(name);
+        if let Some(expression) = money_expression(&quoted, sample) {
+            cleaned.push((*index, expression));
         }
     }
 
@@ -284,22 +289,40 @@ fn open_csv(engine: &Engine, path: &Path) -> Result<DataModel, ConnectorError> {
     Ok(model)
 }
 
-/// The non-null text values of one column, capped at a sample size that is enough to classify it.
-fn sample_text(engine: &Engine, source: &str, column: &str) -> Result<Vec<String>, ConnectorError> {
-    let result = engine.execute(
-        &format!("SELECT {column} FROM {source} WHERE {column} IS NOT NULL LIMIT 200"),
-        &[],
-    )?;
-    let mut values = Vec::new();
+/// The non-null values of several text columns, capped at a sample size that is enough to classify
+/// them. One query keeps a large file from being sniffed once per column.
+fn sample_texts(
+    engine: &Engine,
+    source: &str,
+    columns: &[(usize, String)],
+) -> Result<Vec<Vec<String>>, ConnectorError> {
+    if columns.is_empty() {
+        return Ok(Vec::new());
+    }
+    let projection = columns
+        .iter()
+        .map(|(_, name)| quote_ident(name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let result = engine.execute(&format!("SELECT {projection} FROM {source} LIMIT 200"), &[])?;
+    let mut samples = vec![Vec::new(); columns.len()];
     for batch in &result.batches {
-        let Some(array) = batch.column(0).as_any().downcast_ref::<StringArray>() else {
-            return Ok(Vec::new());
-        };
-        for row in 0..array.len() {
-            values.push(array.value(row).to_owned());
+        for (position, _) in columns.iter().enumerate() {
+            let Some(array) = batch
+                .column(position)
+                .as_any()
+                .downcast_ref::<StringArray>()
+            else {
+                continue;
+            };
+            samples[position].extend(
+                (0..array.len())
+                    .filter(|row| !array.is_null(*row))
+                    .map(|row| array.value(row).to_owned()),
+            );
         }
     }
-    Ok(values)
+    Ok(samples)
 }
 
 /// Returns the SQL expression that reads a money column as a number, when every sample is money.

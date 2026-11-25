@@ -123,7 +123,7 @@ At the snapshot, of the **51 MVP-scope features**: **51 done, 0 partial, 0 not s
 
 | ID | Criterion (short) | Verdict | Gap to close |
 |---|---|---|---|
-| 01 | 500k CSV → fields < 3 s, no modal | **Partial** | Works; startup/ingest budget not measured |
+| 01 | 500k CSV → fields < 3 s, no modal | **Met** | `tests/mvp01.rs`: a generated 500k-row, 12-field CSV loads in 1.37 s (debug); a CSV opens no modal |
 | 02 | Postgres field list + chart < 2 s | **Partial** | Connects through a native driver; first-chart budget not measured |
 | 03 | Rows/cols chart == hand-written GROUP BY | **Met** | golden SQL + engine tests |
 | 04 | Sum→Avg == AVG | **Met** | `changing_the_aggregation_changes_the_values` |
@@ -144,7 +144,7 @@ At the snapshot, of the **51 MVP-scope features**: **51 done, 0 partial, 0 not s
 | 19 | 8 h soak, < 10 % memory growth | **Not met** | No soak test |
 | 20 | JSON Schema validates app output, zero errors | **Met** | `jsonschema` validates the serialised workbook; schema file cannot drift |
 
-Counts: **Met 12 · Partial 6 · Not met 2.**
+Counts: **Met 13 · Partial 5 · Not met 2.**
 
 ---
 
