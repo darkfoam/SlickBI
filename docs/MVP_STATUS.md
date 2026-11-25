@@ -130,7 +130,7 @@ At the snapshot, of the **52 MVP-scope features**: **52 done, 0 partial, 0 not s
 | 04 | Sum→Avg == AVG | **Met** | `changing_the_aggregation_changes_the_values` |
 | 05 | Filter totals == WHERE | **Met** | filter tests + golden SQL |
 | 06 | Parameter bound to filter re-renders | **Met** | C03: parameter list, `[Name]` in calculations, filter binding |
-| 07 | Divide-by-zero calc: null semantics, editor warns | **Partial** | SQL null behaviour holds; editor does not surface the risk |
+| 07 | Divide-by-zero calc: null semantics, editor warns | **Met** | Division returns NULL per row; the calculation editor shows an amber warning whenever the expression divides |
 | 08 | Type error inline at span, not saved | **Met** | Inline span highlight; invalid expressions are not added |
 | 09 | Rename updates report panel + used-in | **Met** | name read live |
 | 10 | Delete used worksheet → placeholders, warns, names reports | **Met** | T05 fix + test |
@@ -145,7 +145,7 @@ At the snapshot, of the **52 MVP-scope features**: **52 done, 0 partial, 0 not s
 | 19 | 8 h soak, < 10 % memory growth | **Not met** | No soak test |
 | 20 | JSON Schema validates app output, zero errors | **Met** | `jsonschema` validates the serialised workbook; schema file cannot drift |
 
-Counts: **Met 14 · Partial 4 · Not met 2.**
+Counts: **Met 15 · Partial 3 · Not met 2.**
 
 ---
 
