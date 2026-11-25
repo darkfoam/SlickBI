@@ -11,7 +11,10 @@
 //! Keeping this pure is what makes the geometry testable: every test below asserts that no mark
 //! falls outside its panel and that every domain covers its data, without a GPU.
 
-use arrow::array::{Array, Float64Array, Int64Array, StringArray};
+use std::collections::HashMap;
+
+use arrow::array::{Array, Float64Array, StringArray};
+use arrow::datatypes::DataType as ArrowDataType;
 use arrow::record_batch::RecordBatch;
 use slickbi_planner::{ChannelKind, OutputColumn};
 use slickbi_spec::Mark;
@@ -28,6 +31,9 @@ const PALETTE: [[f32; 4]; 8] = [
     [0.745, 0.071, 0.235, 1.0],
     [0.263, 0.22, 0.792, 1.0],
 ];
+
+/// The vertical space reserved above the plot for a legend, in points.
+const LEGEND_HEIGHT: f32 = 24.0;
 
 /// Margins, in points, reserved around the plot area for axes.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -132,6 +138,15 @@ pub enum SeriesKind {
     Points(Vec<Point>),
 }
 
+/// One entry in a legend: the swatch colour and the series it names.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegendEntry {
+    /// The series label.
+    pub label: String,
+    /// The swatch colour, RGBA.
+    pub color: [f32; 4],
+}
+
 /// A complete scene, ready to draw.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Scene {
@@ -147,6 +162,8 @@ pub struct Scene {
     pub y_axis: Axis,
     /// The series to draw.
     pub series: Vec<Series>,
+    /// Legend entries, when the chart splits into several series. Empty for a single series.
+    pub legend: Vec<LegendEntry>,
 }
 
 /// Everything needed to build a scene.
@@ -181,19 +198,48 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
         .iter()
         .position(|column| column.kind == ChannelKind::Y)
         .ok_or(SceneError::MissingShelf("y"))?;
+    let color_index = spec
+        .columns
+        .iter()
+        .position(|column| column.kind == ChannelKind::Color);
 
-    let plot = plot_rect(spec.size, spec.margins);
+    let has_color = color_index.is_some();
+    let margins = if has_color {
+        Margins {
+            top: spec.margins.top + LEGEND_HEIGHT,
+            ..spec.margins
+        }
+    } else {
+        spec.margins
+    };
+    let plot = plot_rect(spec.size, margins);
 
     let x = read_x(spec.batches, x_index)?;
     let y = read_numeric(spec.batches, y_index)?;
+    let color = color_index
+        .map(|index| read_labels(spec.batches, index))
+        .transpose()?;
 
-    match spec.mark {
-        Mark::Bar => bar_scene(spec, plot, x, y),
-        Mark::Line => line_scene(spec, plot, x, y, false),
-        Mark::Area => line_scene(spec, plot, x, y, true),
-        Mark::Point => point_scene(spec, plot, x, y),
+    let mut scene = match spec.mark {
+        Mark::Bar => bar_scene(spec, plot, x, y, color),
+        Mark::Line => line_scene(spec, plot, x, y, false, color),
+        Mark::Area => line_scene(spec, plot, x, y, true, color),
+        Mark::Point => point_scene(spec, plot, x, y, color),
         other => Err(SceneError::UnsupportedMark { mark: other }),
+    }?;
+
+    if has_color {
+        scene.legend = scene
+            .series
+            .iter()
+            .map(|series| LegendEntry {
+                label: series.label.clone(),
+                color: series.color,
+            })
+            .collect();
     }
+
+    Ok(scene)
 }
 
 fn plot_rect(size: (f32, f32), margins: Margins) -> Rect {
@@ -216,34 +262,52 @@ fn bar_scene(
     plot: Rect,
     x: XData,
     y: Vec<Option<f64>>,
+    color: Option<Vec<Option<String>>>,
 ) -> Result<Scene, SceneError> {
     let categories = x.as_categorical().ok_or(SceneError::CategoricalXExpected)?;
-    let band = plot.width / categories.len().max(1) as f32;
-    let bar_width = band * 0.7;
+
+    let (distinct, category_of) = dedup(categories);
+    let groups = series_groups(&color, y.len());
+
+    let band = plot.width / distinct.len().max(1) as f32;
+    let sub_band = band / groups.len().max(1) as f32;
+    let bar_width = sub_band * 0.7;
 
     let y_scale = LinearScale::with_zero(numeric_domain(&y));
 
-    let mut bars = Vec::with_capacity(categories.len());
-    let mut ticks = Vec::with_capacity(categories.len());
-
-    for (index, category) in categories.iter().enumerate() {
-        let Some(value) = y[index] else {
-            continue;
-        };
-        let center = plot.x + band * index as f32 + band / 2.0;
-        let top = y_scale.map_y(value, plot.y, plot.height);
-        let bottom = y_scale.map_y(0.0, plot.y, plot.height);
-        bars.push(Bar {
-            x: center - bar_width / 2.0,
-            y: top,
-            width: bar_width,
-            height: bottom - top,
-        });
-        ticks.push(Tick {
-            position: center,
-            text: category.as_ref().cloned().unwrap_or_default(),
+    let mut series = Vec::with_capacity(groups.len());
+    for (index, (label, rows)) in groups.iter().enumerate() {
+        let mut bars = Vec::new();
+        for &row in rows {
+            let Some(value) = y[row] else {
+                continue;
+            };
+            let category = category_of[row];
+            let center = plot.x + band * category as f32 + sub_band * index as f32 + sub_band / 2.0;
+            let top = y_scale.map_y(value, plot.y, plot.height);
+            let bottom = y_scale.map_y(0.0, plot.y, plot.height);
+            bars.push(Bar {
+                x: center - bar_width / 2.0,
+                y: top,
+                width: bar_width,
+                height: bottom - top,
+            });
+        }
+        series.push(Series {
+            label: label.clone(),
+            color: PALETTE[index % PALETTE.len()],
+            kind: SeriesKind::Bars(bars),
         });
     }
+
+    let ticks = distinct
+        .iter()
+        .enumerate()
+        .map(|(index, category)| Tick {
+            position: plot.x + band * index as f32 + band / 2.0,
+            text: category.as_ref().cloned().unwrap_or_default(),
+        })
+        .collect();
 
     Ok(Scene {
         width: spec.size.0,
@@ -254,11 +318,8 @@ fn bar_scene(
             categorical: true,
         },
         y_axis: numeric_axis(&y_scale, plot),
-        series: vec![Series {
-            label: "".to_owned(),
-            color: PALETTE[0],
-            kind: SeriesKind::Bars(bars),
-        }],
+        series,
+        legend: Vec::new(),
     })
 }
 
@@ -268,20 +329,15 @@ fn line_scene(
     x: XData,
     y: Vec<Option<f64>>,
     area: bool,
+    color: Option<Vec<Option<String>>>,
 ) -> Result<Scene, SceneError> {
     let x_numeric = x.as_numeric().ok_or(SceneError::NumericXExpected)?;
 
-    // Order the points by x so the line connects left to right.
-    let mut data: Vec<(f64, f64)> = x_numeric
-        .iter()
-        .zip(y.iter())
-        .filter_map(|(x, y)| Some(((*x)?, (*y)?)))
-        .collect();
-    data.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let groups = series_groups(&color, y.len());
 
-    let x_domain = numeric_domain(&data.iter().map(|(x, _)| Some(*x)).collect::<Vec<_>>());
-    let y_domain = numeric_domain_padded(&data.iter().map(|(_, y)| Some(*y)).collect::<Vec<_>>());
-
+    // One domain across every series so grouped lines and areas stay comparable.
+    let x_domain = numeric_domain(x_numeric);
+    let y_domain = numeric_domain_padded(&y);
     let x_scale = LinearScale::new(x_domain);
     let y_scale = if area {
         LinearScale::with_zero(y_domain)
@@ -289,13 +345,33 @@ fn line_scene(
         LinearScale::new(y_domain)
     };
 
-    let points: Vec<Point> = data
-        .iter()
-        .map(|(x, y)| Point {
-            x: x_scale.map(*x, plot.x, plot.width),
-            y: y_scale.map_y(*y, plot.y, plot.height),
-        })
-        .collect();
+    let mut series = Vec::with_capacity(groups.len());
+    for (index, (label, rows)) in groups.iter().enumerate() {
+        let mut data: Vec<(f64, f64)> = rows
+            .iter()
+            .filter_map(|&row| Some((x_numeric[row]?, y[row]?)))
+            .collect();
+        data.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+        let points: Vec<Point> = data
+            .iter()
+            .map(|(x, y)| Point {
+                x: x_scale.map(*x, plot.x, plot.width),
+                y: y_scale.map_y(*y, plot.y, plot.height),
+            })
+            .collect();
+
+        let kind = if area {
+            SeriesKind::Area(points)
+        } else {
+            SeriesKind::Line(points)
+        };
+        series.push(Series {
+            label: label.clone(),
+            color: PALETTE[index % PALETTE.len()],
+            kind,
+        });
+    }
 
     let x_axis = Axis {
         ticks: linear_ticks(&x_scale, plot, false),
@@ -303,23 +379,14 @@ fn line_scene(
     };
     let y_axis = numeric_axis(&y_scale, plot);
 
-    let kind = if area {
-        SeriesKind::Area(points)
-    } else {
-        SeriesKind::Line(points)
-    };
-
     Ok(Scene {
         width: spec.size.0,
         height: spec.size.1,
         plot,
         x_axis,
         y_axis,
-        series: vec![Series {
-            label: "".to_owned(),
-            color: if area { PALETTE[3] } else { PALETTE[1] },
-            kind,
-        }],
+        series,
+        legend: Vec::new(),
     })
 }
 
@@ -328,27 +395,36 @@ fn point_scene(
     plot: Rect,
     x: XData,
     y: Vec<Option<f64>>,
+    color: Option<Vec<Option<String>>>,
 ) -> Result<Scene, SceneError> {
     let x_numeric = x.as_numeric().ok_or(SceneError::NumericXExpected)?;
 
-    let data: Vec<(f64, f64)> = x_numeric
-        .iter()
-        .zip(y.iter())
-        .filter_map(|(x, y)| Some(((*x)?, (*y)?)))
-        .collect();
+    let groups = series_groups(&color, y.len());
 
-    let x_domain = numeric_domain(&data.iter().map(|(x, _)| Some(*x)).collect::<Vec<_>>());
-    let y_domain = numeric_domain_padded(&data.iter().map(|(_, y)| Some(*y)).collect::<Vec<_>>());
+    let x_domain = numeric_domain(x_numeric);
+    let y_domain = numeric_domain_padded(&y);
     let x_scale = LinearScale::new(x_domain);
     let y_scale = LinearScale::new(y_domain);
 
-    let points: Vec<Point> = data
-        .iter()
-        .map(|(x, y)| Point {
-            x: x_scale.map(*x, plot.x, plot.width),
-            y: y_scale.map_y(*y, plot.y, plot.height),
-        })
-        .collect();
+    let mut series = Vec::with_capacity(groups.len());
+    for (index, (label, rows)) in groups.iter().enumerate() {
+        let points: Vec<Point> = rows
+            .iter()
+            .filter_map(|&row| {
+                let x = x_numeric[row]?;
+                let y = y[row]?;
+                Some(Point {
+                    x: x_scale.map(x, plot.x, plot.width),
+                    y: y_scale.map_y(y, plot.y, plot.height),
+                })
+            })
+            .collect();
+        series.push(Series {
+            label: label.clone(),
+            color: PALETTE[index % PALETTE.len()],
+            kind: SeriesKind::Points(points),
+        });
+    }
 
     Ok(Scene {
         width: spec.size.0,
@@ -359,11 +435,8 @@ fn point_scene(
             categorical: false,
         },
         y_axis: numeric_axis(&y_scale, plot),
-        series: vec![Series {
-            label: "".to_owned(),
-            color: PALETTE[2],
-            kind: SeriesKind::Points(points),
-        }],
+        series,
+        legend: Vec::new(),
     })
 }
 
@@ -542,14 +615,12 @@ fn read_x(batches: &[RecordBatch], index: usize) -> Result<XData, SceneError> {
             for i in 0..array.len() {
                 numeric.push((!array.is_null(i)).then(|| array.value(i)));
             }
-        } else if let Some(array) = column.as_any().downcast_ref::<Int64Array>() {
+        } else if let Some(values) = to_f64(column) {
             if is_categorical == Some(true) {
                 return Err(SceneError::MixedXTypes);
             }
             is_categorical = Some(false);
-            for i in 0..array.len() {
-                numeric.push((!array.is_null(i)).then(|| array.value(i) as f64));
-            }
+            numeric.extend(values);
         } else {
             return Err(SceneError::UndrawableXType);
         }
@@ -566,19 +637,114 @@ fn read_numeric(batches: &[RecordBatch], index: usize) -> Result<Vec<Option<f64>
     let mut values = Vec::new();
     for batch in batches {
         let column = batch.column(index);
-        if let Some(array) = column.as_any().downcast_ref::<Float64Array>() {
-            for i in 0..array.len() {
-                values.push((!array.is_null(i)).then(|| array.value(i)));
-            }
-        } else if let Some(array) = column.as_any().downcast_ref::<Int64Array>() {
-            for i in 0..array.len() {
-                values.push((!array.is_null(i)).then(|| array.value(i) as f64));
-            }
-        } else {
-            return Err(SceneError::UndrawableYType);
-        }
+        let mut numbers = to_f64(column).ok_or(SceneError::UndrawableYType)?;
+        values.append(&mut numbers);
     }
     Ok(values)
+}
+
+/// Reads a column as categorical labels, one per row: text as-is, numbers formatted as text.
+fn read_labels(batches: &[RecordBatch], index: usize) -> Result<Vec<Option<String>>, SceneError> {
+    let mut labels = Vec::new();
+    for batch in batches {
+        let column = batch.column(index);
+        if let Some(array) = column.as_any().downcast_ref::<StringArray>() {
+            for i in 0..array.len() {
+                labels.push((!array.is_null(i)).then(|| array.value(i).to_owned()));
+            }
+        } else if let Some(values) = to_f64(column) {
+            labels.extend(values.into_iter().map(|value| value.map(format_number)));
+        } else {
+            return Err(SceneError::UndrawableColorType);
+        }
+    }
+    Ok(labels)
+}
+
+/// The series to draw: one entry per colour value, or a single unnamed series when there is no
+/// colour shelf. Each series is a list of row indices, in first-appearance order.
+fn series_groups(
+    color: &Option<Vec<Option<String>>>,
+    row_count: usize,
+) -> Vec<(String, Vec<usize>)> {
+    match color {
+        Some(labels) => group_rows(labels),
+        None => vec![(String::new(), (0..row_count).collect())],
+    }
+}
+
+/// Groups row indices by their label, preserving first-appearance order. A null label becomes the
+/// empty string, so nulls group together rather than one group per row.
+fn group_rows(labels: &[Option<String>]) -> Vec<(String, Vec<usize>)> {
+    let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for (row, label) in labels.iter().enumerate() {
+        let text = label.clone().unwrap_or_default();
+        let group = match index.get(&text) {
+            Some(&group) => group,
+            None => {
+                let group = groups.len();
+                index.insert(text.clone(), group);
+                groups.push((text, Vec::new()));
+                group
+            }
+        };
+        groups[group].1.push(row);
+    }
+    groups
+}
+
+/// Maps each value to its first-appearance index and returns the distinct values in that order.
+fn dedup(values: &[Option<String>]) -> (Vec<Option<String>>, Vec<usize>) {
+    let mut distinct: Vec<Option<String>> = Vec::new();
+    let mut index: HashMap<Option<String>, usize> = HashMap::new();
+    let mut indices = Vec::with_capacity(values.len());
+    for value in values {
+        let key = value.clone();
+        let position = match index.get(&key) {
+            Some(&position) => position,
+            None => {
+                let position = distinct.len();
+                index.insert(key, position);
+                distinct.push(value.clone());
+                position
+            }
+        };
+        indices.push(position);
+    }
+    (distinct, indices)
+}
+
+/// Converts a numeric Arrow column to `f64`, whatever its integer, decimal or float type.
+///
+/// DuckDB returns `HUGEINT` (an Arrow `Decimal128`) for `SUM` and `COUNT` of integer columns, so
+/// charts must accept more than just `Float64` and `Int64`.
+fn to_f64(column: &dyn Array) -> Option<Vec<Option<f64>>> {
+    if !matches!(
+        column.data_type(),
+        ArrowDataType::Int8
+            | ArrowDataType::Int16
+            | ArrowDataType::Int32
+            | ArrowDataType::Int64
+            | ArrowDataType::UInt8
+            | ArrowDataType::UInt16
+            | ArrowDataType::UInt32
+            | ArrowDataType::UInt64
+            | ArrowDataType::Float16
+            | ArrowDataType::Float32
+            | ArrowDataType::Float64
+            | ArrowDataType::Decimal128(_, _)
+            | ArrowDataType::Decimal256(_, _)
+    ) {
+        return None;
+    }
+    let cast = arrow::compute::cast(column, &ArrowDataType::Float64).ok()?;
+    let array = cast.as_any().downcast_ref::<Float64Array>()?;
+    Some(
+        (0..array.len())
+            .map(|i| (!array.is_null(i)).then(|| array.value(i)))
+            .collect(),
+    )
 }
 
 /// Anything that prevents a scene from being built.
@@ -608,6 +774,9 @@ pub enum SceneError {
     /// The y column's type cannot be drawn.
     #[error("the y column has a type the scene builder cannot draw")]
     UndrawableYType,
+    /// The colour column's type cannot be drawn.
+    #[error("the colour column has a type the scene builder cannot draw")]
+    UndrawableColorType,
 }
 
 #[cfg(test)]
@@ -672,6 +841,53 @@ mod tests {
     }
 
     use std::sync::Arc;
+
+    #[test]
+    fn integer_values_are_drawn() {
+        // A raw integer column (no aggregation) must still produce a bar per category.
+        let schema = Schema::new(vec![
+            Field::new("x", DataType::Utf8, true),
+            Field::new("y", DataType::Int32, true),
+        ]);
+        let mut x = StringBuilder::new();
+        x.append_value("A");
+        x.append_value("B");
+        let y = arrow::array::Int32Array::from(vec![10, 20]);
+        let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(x.finish()), Arc::new(y)])
+            .expect("batch");
+
+        let columns = vec![column(ChannelKind::X, "x"), column(ChannelKind::Y, "y")];
+        let scene = build(&spec(Mark::Bar, &columns, &[batch])).expect("integer bars build");
+        let SeriesKind::Bars(bars) = &scene.series[0].kind else {
+            panic!("expected bars");
+        };
+        assert_eq!(bars.len(), 2);
+        assert!(bars[1].height > bars[0].height);
+    }
+
+    #[test]
+    fn hugeint_sums_are_drawn() {
+        // DuckDB returns HUGEINT (an Arrow Decimal128) for SUM over an integer column.
+        let schema = Schema::new(vec![
+            Field::new("x", DataType::Utf8, true),
+            Field::new("y", DataType::Decimal128(38, 0), true),
+        ]);
+        let mut x = StringBuilder::new();
+        x.append_value("A");
+        let y = arrow::array::Decimal128Array::from(vec![Some(123i128)])
+            .with_precision_and_scale(38, 0)
+            .expect("decimal");
+        let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(x.finish()), Arc::new(y)])
+            .expect("batch");
+
+        let columns = vec![column(ChannelKind::X, "x"), column(ChannelKind::Y, "y")];
+        let scene = build(&spec(Mark::Bar, &columns, &[batch])).expect("hugeint bars build");
+        let SeriesKind::Bars(bars) = &scene.series[0].kind else {
+            panic!("expected bars");
+        };
+        assert_eq!(bars.len(), 1);
+        assert!(bars[0].height > 0.0);
+    }
 
     #[test]
     fn a_bar_scene_has_one_bar_per_category_inside_the_plot() {
@@ -783,5 +999,120 @@ mod tests {
     fn nice_ticks_cover_the_domain_with_round_values() {
         let ticks = nice_ticks(0.0, 10.0, 6);
         assert_eq!(ticks, vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0]);
+    }
+
+    fn batch_categorical_color(rows: &[(&str, f64, &str)]) -> RecordBatch {
+        let schema = Schema::new(vec![
+            Field::new("x", DataType::Utf8, true),
+            Field::new("y", DataType::Float64, true),
+            Field::new("color", DataType::Utf8, true),
+        ]);
+        let mut x = StringBuilder::new();
+        let mut color = StringBuilder::new();
+        let mut ys = Vec::new();
+        for (x_value, y, color_value) in rows {
+            x.append_value(x_value);
+            ys.push(*y);
+            color.append_value(color_value);
+        }
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(x.finish()),
+                Arc::new(Float64Array::from(ys)),
+                Arc::new(color.finish()),
+            ],
+        )
+        .expect("batch")
+    }
+
+    fn color_columns() -> Vec<OutputColumn> {
+        vec![
+            column(ChannelKind::X, "x"),
+            column(ChannelKind::Y, "y"),
+            column(ChannelKind::Color, "color"),
+        ]
+    }
+
+    #[test]
+    fn grouped_bars_produce_one_series_per_color() {
+        let batch = batch_categorical_color(&[
+            ("A", 3.0, "red"),
+            ("A", 5.0, "blue"),
+            ("B", 2.0, "red"),
+            ("B", 4.0, "blue"),
+        ]);
+        let scene = build(&spec(Mark::Bar, &color_columns(), &[batch])).expect("builds");
+
+        assert_eq!(scene.series.len(), 2);
+        assert_eq!(scene.series[0].label, "red");
+        assert_eq!(scene.series[1].label, "blue");
+        assert_ne!(scene.series[0].color, scene.series[1].color);
+        assert_eq!(scene.legend.len(), 2, "a grouped chart carries a legend");
+        assert_eq!(scene.legend[0].label, "red");
+        assert_eq!(scene.legend[1].label, "blue");
+
+        // Two x categories, so each series carries two bars.
+        for series in &scene.series {
+            let SeriesKind::Bars(bars) = &series.kind else {
+                panic!("expected bars");
+            };
+            assert_eq!(bars.len(), 2);
+        }
+        assert_eq!(scene.x_axis.ticks.len(), 2);
+    }
+
+    #[test]
+    fn grouped_bars_in_one_category_are_side_by_side() {
+        let batch = batch_categorical_color(&[("A", 3.0, "red"), ("A", 5.0, "blue")]);
+        let scene = build(&spec(Mark::Bar, &color_columns(), &[batch])).expect("builds");
+
+        let SeriesKind::Bars(red) = &scene.series[0].kind else {
+            panic!("expected bars");
+        };
+        let SeriesKind::Bars(blue) = &scene.series[1].kind else {
+            panic!("expected bars");
+        };
+        assert_eq!(red.len(), 1);
+        assert_eq!(blue.len(), 1);
+        // Same category, so the bars sit beside each other rather than overlapping.
+        assert!(red[0].x < blue[0].x);
+        assert!(red[0].x >= scene.plot.x - 0.01);
+        assert!(blue[0].x + blue[0].width <= scene.plot.x + scene.plot.width + 0.01);
+    }
+
+    #[test]
+    fn a_line_chart_splits_into_one_series_per_color() {
+        let schema = Schema::new(vec![
+            Field::new("x", DataType::Float64, true),
+            Field::new("y", DataType::Float64, true),
+            Field::new("color", DataType::Utf8, true),
+        ]);
+        let x = Float64Array::from(vec![1.0, 1.0, 2.0, 2.0]);
+        let y = Float64Array::from(vec![10.0, 20.0, 15.0, 25.0]);
+        let mut color = StringBuilder::new();
+        color.append_value("red");
+        color.append_value("blue");
+        color.append_value("red");
+        color.append_value("blue");
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(x), Arc::new(y), Arc::new(color.finish())],
+        )
+        .expect("batch");
+
+        let scene = build(&spec(Mark::Line, &color_columns(), &[batch])).expect("builds");
+        assert_eq!(scene.series.len(), 2);
+        assert_eq!(scene.series[0].label, "red");
+        assert_eq!(scene.series[1].label, "blue");
+        for series in &scene.series {
+            let SeriesKind::Line(points) = &series.kind else {
+                panic!("expected a line");
+            };
+            assert_eq!(points.len(), 2);
+            for window in points.windows(2) {
+                assert!(window[0].x <= window[1].x);
+            }
+        }
     }
 }

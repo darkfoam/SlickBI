@@ -16,7 +16,7 @@ use slickbi_planner::{PlanOptions, plan};
 use slickbi_scene::{Margins, Scene, SceneSpec, build};
 use slickbi_spec::{
     Agg, Channel, DataModelId, DataType, Field, FieldId, FieldSource, Filter, FilterOp, Mark,
-    Report, Role, Scalar, Workbook, Worksheet, WorksheetId,
+    Report, Role, Scalar, SortKey, Workbook, Worksheet, WorksheetId,
 };
 use slickbi_workbook::Scz;
 use thiserror::Error;
@@ -28,6 +28,8 @@ pub enum Shelf {
     X,
     /// The vertical shelf.
     Y,
+    /// The colour shelf: splits marks into a series per value.
+    Color,
 }
 
 /// A field as owned data for the data pane: its identifier and display name.
@@ -159,7 +161,11 @@ impl Session {
             .connections
             .push(slickbi_connectors::connection(path, format));
 
-        let worksheet = new_worksheet(self.workbook.worksheets.len(), DataModelId::new("m1"));
+        let worksheet = new_worksheet(
+            self.unique_worksheet_id(),
+            format!("Sheet {}", self.workbook.worksheets.len() + 1),
+            DataModelId::new("m1"),
+        );
         self.workbook.worksheets.push(worksheet);
         self.active = self.workbook.worksheets.len() - 1;
         self.source = Some((path.to_owned(), format));
@@ -169,10 +175,11 @@ impl Session {
 
     /// Adds a new, empty worksheet and makes it active.
     pub fn add_worksheet(&mut self) {
-        let index = self.workbook.worksheets.len();
-        let model = DataModelId::new("m1");
-        self.workbook.worksheets.push(new_worksheet(index, model));
-        self.active = index;
+        let id = self.unique_worksheet_id();
+        let name = format!("Sheet {}", self.workbook.worksheets.len() + 1);
+        let worksheet = new_worksheet(id, name, DataModelId::new("m1"));
+        self.workbook.worksheets.push(worksheet);
+        self.active = self.workbook.worksheets.len() - 1;
         self.refresh();
     }
 
@@ -181,6 +188,53 @@ impl Session {
         if index < self.workbook.worksheets.len() {
             self.active = index;
             self.refresh();
+        }
+    }
+
+    /// Renames a worksheet. Blank names are ignored.
+    pub fn rename_worksheet(&mut self, index: usize, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        if let Some(worksheet) = self.workbook.worksheets.get_mut(index) {
+            worksheet.name = name.to_owned();
+        }
+    }
+
+    /// Duplicates a worksheet (its fields, mark and filters), inserting the copy right after it.
+    pub fn duplicate_worksheet(&mut self, index: usize) {
+        let Some(original) = self.workbook.worksheets.get(index).cloned() else {
+            return;
+        };
+        let id = self.unique_worksheet_id();
+        let mut copy = original;
+        copy.id = id;
+        copy.name = format!("{} copy", copy.name);
+        let insert_at = index + 1;
+        self.workbook.worksheets.insert(insert_at, copy);
+        self.active = insert_at;
+        self.refresh();
+    }
+
+    /// The reports that reference a worksheet, by name.
+    pub fn used_in(&self, worksheet: &WorksheetId) -> Vec<String> {
+        self.workbook
+            .reports
+            .iter()
+            .filter(|report| report.referenced_worksheets().contains(&worksheet))
+            .map(|report| report.name.clone())
+            .collect()
+    }
+
+    fn unique_worksheet_id(&self) -> WorksheetId {
+        let mut n = self.workbook.worksheets.len();
+        loop {
+            let candidate = WorksheetId::new(format!("ws_{n}"));
+            if !self.workbook.worksheets.iter().any(|w| w.id == candidate) {
+                return candidate;
+            }
+            n += 1;
         }
     }
 
@@ -211,6 +265,7 @@ impl Session {
         match shelf {
             Shelf::X => worksheet.encoding.x = Some(channel),
             Shelf::Y => worksheet.encoding.y = Some(channel),
+            Shelf::Color => worksheet.encoding.color = Some(channel),
         }
         self.refresh();
     }
@@ -223,6 +278,7 @@ impl Session {
         match shelf {
             Shelf::X => worksheet.encoding.x = None,
             Shelf::Y => worksheet.encoding.y = None,
+            Shelf::Color => worksheet.encoding.color = None,
         }
         self.refresh();
     }
@@ -233,6 +289,61 @@ impl Session {
             return;
         };
         worksheet.mark = mark;
+        self.refresh();
+    }
+
+    /// Changes the aggregation of a shelf on the active worksheet.
+    pub fn set_agg(&mut self, shelf: Shelf, agg: Agg) {
+        let Some(worksheet) = self.workbook.worksheets.get_mut(self.active) else {
+            return;
+        };
+        let channel = match shelf {
+            Shelf::X => worksheet.encoding.x.as_mut(),
+            Shelf::Y => worksheet.encoding.y.as_mut(),
+            Shelf::Color => worksheet.encoding.color.as_mut(),
+        };
+        if let Some(channel) = channel {
+            channel.agg = agg;
+        }
+        self.refresh();
+    }
+
+    /// Sorts the active worksheet by the field on a shelf, keeping that shelf's aggregation.
+    pub fn set_sort(&mut self, shelf: Shelf, descending: bool) {
+        let Some(worksheet) = self.workbook.worksheets.get_mut(self.active) else {
+            return;
+        };
+        let channel = match shelf {
+            Shelf::X => worksheet.encoding.x.as_ref(),
+            Shelf::Y => worksheet.encoding.y.as_ref(),
+            Shelf::Color => return,
+        };
+        let Some(channel) = channel else {
+            return;
+        };
+        worksheet.sort = vec![SortKey {
+            field: channel.field.clone(),
+            agg: channel.agg,
+            descending,
+        }];
+        self.refresh();
+    }
+
+    /// Removes the explicit sort from the active worksheet.
+    pub fn clear_sort(&mut self) {
+        let Some(worksheet) = self.workbook.worksheets.get_mut(self.active) else {
+            return;
+        };
+        worksheet.sort.clear();
+        self.refresh();
+    }
+
+    /// Sets the row limit on the active worksheet.
+    pub fn set_limit(&mut self, limit: Option<u32>) {
+        let Some(worksheet) = self.workbook.worksheets.get_mut(self.active) else {
+            return;
+        };
+        worksheet.limit = limit;
         self.refresh();
     }
 
@@ -322,8 +433,9 @@ impl Session {
 
     /// Adds a report and makes it active.
     pub fn add_report(&mut self, name: &str) {
+        let id = self.unique_report_id();
         let report = Report {
-            id: slickbi_spec::ReportId::new(format!("r{}", self.workbook.reports.len())),
+            id,
             name: name.to_owned(),
             target: slickbi_spec::ReportTarget::Screen,
             theme: None,
@@ -334,14 +446,131 @@ impl Session {
         self.active_report = self.workbook.reports.len() - 1;
     }
 
+    /// Renames a report. Blank names are ignored.
+    pub fn rename_report(&mut self, index: usize, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        if let Some(report) = self.workbook.reports.get_mut(index) {
+            report.name = name.to_owned();
+        }
+    }
+
+    /// Sets (or clears) the theme of a report.
+    pub fn set_report_theme(&mut self, index: usize, theme: Option<String>) {
+        if let Some(report) = self.workbook.reports.get_mut(index) {
+            report.theme = theme;
+        }
+    }
+
+    /// Makes the given report active.
+    pub fn set_active_report(&mut self, index: usize) {
+        if index < self.workbook.reports.len() {
+            self.active_report = index;
+        }
+    }
+
+    /// Removes an element from a report.
+    pub fn remove_report_element(&mut self, report: usize, index: usize) {
+        if let Some(report) = self.workbook.reports.get_mut(report)
+            && index < report.elements.len()
+        {
+            report.elements.remove(index);
+        }
+    }
+
+    /// Replaces the markdown of a text element in a report.
+    pub fn set_text_element(&mut self, report: usize, index: usize, markdown: &str) {
+        if let Some(report) = self.workbook.reports.get_mut(report)
+            && let Some(element) = report.elements.get_mut(index)
+            && let slickbi_spec::ElementKind::Text { text } = &mut element.kind
+        {
+            text.markdown = markdown.to_owned();
+        }
+    }
+
+    /// Sets a chart element's title override. A blank title clears the override.
+    pub fn set_chart_title(&mut self, report: usize, index: usize, title: &str) {
+        if let Some(report) = self.workbook.reports.get_mut(report)
+            && let Some(element) = report.elements.get_mut(index)
+            && let slickbi_spec::ElementKind::Chart { chart } = &mut element.kind
+        {
+            chart.title = if title.trim().is_empty() {
+                None
+            } else {
+                Some(title.trim().to_owned())
+            };
+        }
+    }
+
+    /// The title override on a chart element, if any.
+    pub fn chart_title(&self, report: usize, index: usize) -> Option<&str> {
+        let report = self.workbook.reports.get(report)?;
+        let element = report.elements.get(index)?;
+        match &element.kind {
+            slickbi_spec::ElementKind::Chart { chart } => chart.title.as_deref(),
+            slickbi_spec::ElementKind::Text { .. } => None,
+        }
+    }
+
+    /// The report of a chart element, as `(worksheet, title)`.
+    pub fn chart_element(
+        &self,
+        report: usize,
+        index: usize,
+    ) -> Option<(&WorksheetId, Option<&str>)> {
+        let report = self.workbook.reports.get(report)?;
+        let element = report.elements.get(index)?;
+        match &element.kind {
+            slickbi_spec::ElementKind::Chart { chart } => {
+                Some((&chart.worksheet, chart.title.as_deref()))
+            }
+            slickbi_spec::ElementKind::Text { .. } => None,
+        }
+    }
+
+    /// The markdown of a text element.
+    pub fn text_element(&self, report: usize, index: usize) -> Option<&str> {
+        let report = self.workbook.reports.get(report)?;
+        let element = report.elements.get(index)?;
+        match &element.kind {
+            slickbi_spec::ElementKind::Text { text } => Some(&text.markdown),
+            slickbi_spec::ElementKind::Chart { .. } => None,
+        }
+    }
+
+    fn unique_report_id(&self) -> slickbi_spec::ReportId {
+        let mut n = self.workbook.reports.len();
+        loop {
+            let candidate = slickbi_spec::ReportId::new(format!("r{n}"));
+            if !self.workbook.reports.iter().any(|r| r.id == candidate) {
+                return candidate;
+            }
+            n += 1;
+        }
+    }
+
+    fn unique_element_id(report: &Report) -> slickbi_spec::ElementId {
+        let mut n = report.elements.len();
+        loop {
+            let candidate = format!("e{n}");
+            if !report.elements.iter().any(|e| e.id.as_str() == candidate) {
+                return slickbi_spec::ElementId::new(candidate);
+            }
+            n += 1;
+        }
+    }
+
     /// Places a worksheet as a chart element in the active report, auto-laid-out on a grid.
     pub fn add_chart_to_report(&mut self, worksheet: &WorksheetId) {
         let Some(report) = self.workbook.reports.get_mut(self.active_report) else {
             return;
         };
         let frame = grid_frame(report.elements.len(), report.canvas);
+        let id = Session::unique_element_id(report);
         let element = slickbi_spec::Element {
-            id: slickbi_spec::ElementId::new(format!("e{}", report.elements.len())),
+            id,
             frame,
             kind: slickbi_spec::ElementKind::Chart {
                 chart: slickbi_spec::ChartElement {
@@ -360,8 +589,9 @@ impl Session {
             return;
         };
         let frame = grid_frame(report.elements.len(), report.canvas);
+        let id = Session::unique_element_id(report);
         report.elements.push(slickbi_spec::Element {
-            id: slickbi_spec::ElementId::new(format!("e{}", report.elements.len())),
+            id,
             frame,
             kind: slickbi_spec::ElementKind::Text {
                 text: slickbi_spec::TextElement {
@@ -371,16 +601,6 @@ impl Session {
                 },
             },
         });
-    }
-
-    /// Removes an element from the active report.
-    pub fn remove_element(&mut self, index: usize) {
-        let Some(report) = self.workbook.reports.get_mut(self.active_report) else {
-            return;
-        };
-        if index < report.elements.len() {
-            report.elements.remove(index);
-        }
     }
 
     /// Exports the active worksheet's result as CSV.
@@ -558,10 +778,10 @@ impl Drop for Session {
     }
 }
 
-fn new_worksheet(index: usize, model: DataModelId) -> Worksheet {
+fn new_worksheet(id: WorksheetId, name: String, model: DataModelId) -> Worksheet {
     Worksheet {
-        id: WorksheetId::new(format!("ws_{index}")),
-        name: format!("Sheet {index}"),
+        id,
+        name,
         model,
         mark: Mark::Bar,
         encoding: Default::default(),
@@ -713,6 +933,30 @@ mod tests {
     }
 
     #[test]
+    fn a_color_shelf_splits_bars_into_series() {
+        let path = temp("color.csv");
+        std::fs::write(
+            &path,
+            "region,segment,amount\nEMEA,Retail,10\nEMEA,Wholesale,20\nAPAC,Retail,30\n",
+        )
+        .expect("writes csv");
+        let mut session = Session::new();
+        session.load_file(&path, SourceFormat::Csv).expect("loads");
+
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        session.assign(Shelf::Color, &FieldId::new("segment"));
+
+        let scene = session.scene().expect("scene");
+        assert_eq!(scene.series.len(), 2, "one series per segment");
+
+        // Clearing the colour shelf collapses back to a single series.
+        session.clear(Shelf::Color);
+        assert_eq!(session.scene().expect("scene").series.len(), 1);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
     fn a_filter_reduces_the_scene() {
         let (mut session, path) = loaded();
         session.assign(Shelf::X, &FieldId::new("region"));
@@ -806,5 +1050,191 @@ mod tests {
 
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(&scz_path).ok();
+    }
+
+    fn agg_fixture() -> (Session, PathBuf) {
+        let path = temp("agg.csv");
+        std::fs::write(&path, "region,amount\nEMEA,10\nEMEA,20\nAPAC,30\n").expect("writes csv");
+        let mut session = Session::new();
+        session.load_file(&path, SourceFormat::Csv).expect("loads");
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        (session, path)
+    }
+
+    fn bar_heights(session: &Session) -> Vec<f32> {
+        let scene = session
+            .scene()
+            .unwrap_or_else(|| panic!("no scene: {:?}", session.error()));
+        match &scene.series[0].kind {
+            slickbi_scene::SeriesKind::Bars(bars) => bars.iter().map(|bar| bar.height).collect(),
+            other => panic!("expected bars, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn renaming_a_worksheet_updates_its_tab() {
+        let (mut session, path) = loaded();
+        session.rename_worksheet(0, "  Revenue by region  ");
+        assert_eq!(session.workbook().worksheets[0].name, "Revenue by region");
+        session.rename_worksheet(0, "   ");
+        assert_eq!(session.workbook().worksheets[0].name, "Revenue by region");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn duplicating_a_worksheet_copies_its_encoding_under_a_new_id() {
+        let (mut session, path) = loaded();
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        let original_id = session.workbook().worksheets[0].id.clone();
+
+        session.duplicate_worksheet(0);
+        let worksheets = &session.workbook().worksheets;
+        assert_eq!(worksheets.len(), 2);
+        assert_eq!(worksheets[1].name, "Sheet 1 copy");
+        assert_ne!(worksheets[1].id, original_id);
+        assert_eq!(worksheets[1].encoding.x, worksheets[0].encoding.x);
+        assert_eq!(worksheets[1].encoding.y, worksheets[0].encoding.y);
+        assert_eq!(session.active(), 1);
+        assert!(session.scene().is_some());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn used_in_lists_reports_that_reference_a_worksheet() {
+        let (mut session, path) = loaded();
+        let worksheet = session.active_worksheet().expect("ws").id.clone();
+        assert!(session.used_in(&worksheet).is_empty());
+
+        session.add_report("Quarterly");
+        session.add_chart_to_report(&worksheet);
+        session.add_report("Annual");
+        session.add_chart_to_report(&worksheet);
+
+        assert_eq!(session.used_in(&worksheet), vec!["Quarterly", "Annual"]);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn changing_the_aggregation_changes_the_values() {
+        let (mut session, path) = agg_fixture();
+        // Sum: EMEA 10 + 20 = 30, APAC 30, so both bars are the full height.
+        let sum = bar_heights(&session);
+        assert!((sum[0] - sum[1]).abs() < 0.5, "sum bars should be equal");
+
+        // Average: EMEA (10 + 20) / 2 = 15, APAC 30, so one bar is twice the other, whichever
+        // order the engine returns the groups in.
+        session.set_agg(Shelf::Y, Agg::Average);
+        let average = bar_heights(&session);
+        let (low, high) = if average[0] <= average[1] {
+            (average[0], average[1])
+        } else {
+            (average[1], average[0])
+        };
+        assert!(
+            (high - low * 2.0).abs() < 2.0,
+            "average bars should be in a 2:1 ratio: {:?}",
+            average
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn sorting_orders_the_result_and_limit_caps_it() {
+        let (mut session, path) = agg_fixture();
+        session.set_sort(Shelf::Y, true);
+        let descending = bar_heights(&session);
+        assert!(
+            descending[0] >= descending[1],
+            "descending sort should put the tallest bar first: {:?}",
+            descending
+        );
+
+        session.set_limit(Some(1));
+        assert_eq!(bar_heights(&session).len(), 1);
+
+        session.clear_sort();
+        session.set_limit(None);
+        assert_eq!(bar_heights(&session).len(), 2);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn report_metadata_and_elements_can_be_edited() {
+        let (mut session, path) = loaded();
+        session.add_report("Draft");
+        session.rename_report(0, "Board pack");
+        session.set_report_theme(0, Some("slate".to_owned()));
+        assert_eq!(session.reports()[0].name, "Board pack");
+        assert_eq!(session.reports()[0].theme.as_deref(), Some("slate"));
+
+        let worksheet = session.active_worksheet().expect("ws").id.clone();
+        session.add_chart_to_report(&worksheet);
+        session.add_text_to_report("# Notes");
+        assert_eq!(session.reports()[0].elements.len(), 2);
+
+        // A chart title override and the element accessors.
+        assert_eq!(session.chart_title(0, 0), None);
+        session.set_chart_title(0, 0, "  Revenue  ");
+        assert_eq!(session.chart_title(0, 0), Some("Revenue"));
+        assert_eq!(
+            session.chart_element(0, 0).map(|(id, _)| id),
+            Some(&worksheet)
+        );
+        session.set_chart_title(0, 0, "   ");
+        assert_eq!(session.chart_title(0, 0), None);
+
+        // A text element is editable in place.
+        assert_eq!(session.text_element(0, 1), Some("# Notes"));
+        session.set_text_element(0, 1, "Updated");
+        assert_eq!(session.text_element(0, 1), Some("Updated"));
+
+        session.remove_report_element(0, 0);
+        assert_eq!(session.reports()[0].elements.len(), 1);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn exporting_parquet_writes_the_result() {
+        let (mut session, path) = loaded();
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+
+        let out = temp("export.parquet");
+        session.export_parquet(&out).expect("exports parquet");
+        let metadata = std::fs::metadata(&out).expect("file exists");
+        assert!(metadata.len() > 0);
+        let magic = std::fs::read(&out).expect("reads");
+        assert_eq!(&magic[..4], b"PAR1");
+        assert_eq!(&magic[magic.len() - 4..], b"PAR1");
+
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&out).ok();
+    }
+
+    #[test]
+    fn worksheet_ids_stay_unique_after_removal() {
+        let (mut session, path) = loaded();
+        session.add_worksheet();
+        session.add_worksheet();
+        let before: Vec<_> = session
+            .workbook()
+            .worksheets
+            .iter()
+            .map(|w| w.id.clone())
+            .collect();
+        session.remove_worksheet(1);
+        session.add_worksheet();
+        let after: Vec<_> = session
+            .workbook()
+            .worksheets
+            .iter()
+            .map(|w| w.id.clone())
+            .collect();
+        let unique: std::collections::BTreeSet<_> = after.iter().collect();
+        assert_eq!(unique.len(), after.len(), "worksheet ids must be unique");
+        assert_ne!(before, after);
+        std::fs::remove_file(&path).ok();
     }
 }

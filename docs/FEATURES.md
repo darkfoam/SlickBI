@@ -25,10 +25,10 @@ that needs different data is a forked worksheet.
 
 | ID | Feature | Tier | Release | Status |
 |---|---|---|---|---|
-| D01 | CSV, including drag and drop onto the window | F | 0.0.2 | planned |
+| D01 | CSV, including drag and drop onto the window | F | 0.0.2 | done |
 | D02 | Excel workbooks (`.xlsx`) with sheet selection | F | 0.0.2 | planned |
-| D03 | Parquet | F | 0.0.2 | planned |
-| D04 | JSON and newline-delimited JSON | F | 0.0.2 | planned |
+| D03 | Parquet | F | 0.0.2 | done |
+| D04 | JSON and newline-delimited JSON | F | 0.0.2 | done |
 | D05 | SQLite | F | 0.0.2 | planned |
 | D06 | PostgreSQL | F | 0.0.3 | planned |
 | D07 | MySQL and MariaDB | F | 0.0.3 | planned |
@@ -47,7 +47,7 @@ that needs different data is a forked worksheet.
 
 | ID | Feature | Tier | Release | Status |
 |---|---|---|---|---|
-| M01 | Automatic typing into dimensions and measures | F | 0.0.2 | planned |
+| M01 | Automatic typing into dimensions and measures | F | 0.0.2 | done |
 | M02 | Rename, hide, reorder and group fields into folders | F | 0.0.2 | planned |
 | M03 | Type override, number and date formats | F | 0.0.3 | planned |
 | M04 | Field descriptions | F | 0.0.3 | planned |
@@ -60,10 +60,10 @@ that needs different data is a forked worksheet.
 
 | ID | Feature | Tier | Release | Status |
 |---|---|---|---|---|
-| C01 | Arithmetic, comparison, `IF`/`CASE`, text and date functions | F | 0.0.3 | planned |
-| C02 | Aggregations, including distinct count and median | F | 0.0.3 | planned |
+| C01 | Arithmetic, comparison, `IF`/`CASE`, text and date functions | F | 0.0.3 | done |
+| C02 | Aggregations, including distinct count and median | F | 0.0.3 | done |
 | C03 | Parameters, usable in calculations and filters | F | 0.0.3 | planned |
-| C04 | Type checking with inline, spanning error messages | F | 0.0.3 | planned |
+| C04 | Type checking with inline, spanning error messages | F | 0.0.3 | in progress |
 | C05 | Window and table calculations | F | 0.1.0 | planned |
 | C06 | Level-of-detail expressions | F | 0.1.0 | planned |
 | C07 | Shared calculation library across a workbook | F | 0.2.0 | planned |
@@ -72,13 +72,13 @@ that needs different data is a forked worksheet.
 
 | ID | Feature | Tier | Release | Status |
 |---|---|---|---|---|
-| V01 | Bar and column charts | F | 0.0.2 | planned |
-| V02 | Line and area charts | F | 0.0.2 | planned |
-| V03 | Scatter plots | F | 0.0.2 | planned |
+| V01 | Bar and column charts | F | 0.0.2 | done |
+| V02 | Line and area charts | F | 0.0.2 | done |
+| V03 | Scatter plots | F | 0.0.2 | done |
 | V04 | Tables | F | 0.0.2 | planned |
-| V05 | Shelves: row, column, colour, size, text, detail, tooltip | F | 0.0.2 | planned |
+| V05 | Shelves: row, column, colour, size, text, detail, tooltip | F | 0.0.2 | in progress |
 | V06 | Axis, legend and tooltip configuration | F | 0.0.2 | planned |
-| V07 | Chart-level sort and row limit | F | 0.0.2 | planned |
+| V07 | Chart-level sort and row limit | F | 0.0.2 | done |
 | V08 | Heatmaps | F | 0.0.3 | planned |
 | V09 | Pie and donut charts | F | 0.0.3 | planned |
 | V10 | KPI and text tiles | F | 0.0.3 | planned |
@@ -94,22 +94,22 @@ that needs different data is a forked worksheet.
 | V20 | Annotations on marks | F | 0.3.0 | planned |
 | V21 | Choropleth maps | F | 0.4.0 | planned |
 | V22 | Tile and point maps | F | 0.4.0 | planned |
-| T01 | Worksheet tabs: create, rename, duplicate, close, reorder | F | 0.0.2 | planned |
+| T01 | Worksheet tabs: create, rename, duplicate, close, reorder | F | 0.0.2 | in progress |
 | T02 | Worksheet navigator: search, jump, thumbnails | F | 0.2.0 | planned |
-| T03 | "Used in" indicator: which reports reference this worksheet | F | 0.0.3 | planned |
-| T04 | Fork a worksheet into an independent copy | F | 0.0.2 | planned |
-| T05 | Referential integrity: warn before deleting a referenced worksheet, show a placeholder in reports | F | 0.0.3 | planned |
+| T03 | "Used in" indicator: which reports reference this worksheet | F | 0.0.3 | done |
+| T04 | Fork a worksheet into an independent copy | F | 0.0.2 | done |
+| T05 | Referential integrity: warn before deleting a referenced worksheet, show a placeholder in reports | F | 0.0.3 | in progress |
 | T06 | Jump from a report element to its source worksheet | F | 0.0.3 | planned |
 
 ## Reports
 
 | ID | Feature | Tier | Release | Status |
 |---|---|---|---|---|
-| R01 | Report canvas with a tiled grid | F | 0.0.3 | planned |
-| R02 | Chart elements that reference worksheets live | F | 0.0.3 | planned |
+| R01 | Report canvas with a tiled grid | F | 0.0.3 | done |
+| R02 | Chart elements that reference worksheets live | F | 0.0.3 | done |
 | R03 | Move, resize and reorder elements | F | 0.0.3 | planned |
-| R04 | Text and markdown elements | F | 0.0.3 | planned |
-| R05 | Per-element presentation overrides: title, legend, axes, padding, border | F | 0.0.3 | planned |
+| R04 | Text and markdown elements | F | 0.0.3 | done |
+| R05 | Per-element presentation overrides: title, legend, axes, padding, border | F | 0.0.3 | in progress |
 | R06 | Cross-filtering between report elements | F | 0.0.3 | planned |
 | R07 | Report-level filters | F | 0.1.0 | planned |
 | R08 | Page setup: size, margins, header, footer, page numbers | F | 0.1.0 | planned |
@@ -128,7 +128,7 @@ that needs different data is a forked worksheet.
 
 | ID | Feature | Tier | Release | Status |
 |---|---|---|---|---|
-| X01 | Raw data export: CSV and Parquet of any result | F | 0.0.3 | planned |
+| X01 | Raw data export: CSV and Parquet of any result | F | 0.0.3 | done |
 | X02 | Preview PNG at 1× with a watermark | F | 0.0.4 | planned |
 | X03 | Print-quality PNG (2–4×) and SVG | P | 0.0.4 | planned |
 | X04 | Paginated PDF | P | 0.0.4 | planned |
@@ -173,8 +173,8 @@ that needs different data is a forked worksheet.
 
 | ID | Feature | Tier | Release | Status |
 |---|---|---|---|---|
-| A01 | CLI: validate, compile to SQL, query, inspect workbooks | F | 0.0.1 | planned |
-| A02 | CLI: render a worksheet or report to a preview image | F | 0.0.2 | planned |
+| A01 | CLI: validate, compile to SQL, query, inspect workbooks | F | 0.0.1 | done |
+| A02 | CLI: render a worksheet or report to a preview image | F | 0.0.2 | done |
 | A03 | Local MCP server over stdio | F | 0.0.5 | planned |
 | A04 | MCP tools: describe the model, author and edit worksheets | F | 0.0.5 | planned |
 | A05 | MCP tools: run queries, render previews, read and compose reports | F | 0.0.5 | planned |

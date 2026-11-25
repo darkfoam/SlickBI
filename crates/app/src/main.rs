@@ -3,18 +3,19 @@
 #![forbid(unsafe_code)]
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use eframe::egui;
 use slickbi_app::{Session, Shelf};
 use slickbi_engine::SourceFormat;
 use slickbi_scene::{Bar, Scene, SeriesKind};
-use slickbi_spec::{FieldId, FilterOp, Mark, Role, Scalar};
+use slickbi_spec::{Agg, Channel, FieldId, FilterOp, Mark, Role, Scalar};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 820.0])
-            .with_min_inner_size([760.0, 520.0])
+            .with_inner_size([1320.0, 860.0])
+            .with_min_inner_size([820.0, 560.0])
             .with_title("SlickBI"),
         ..Default::default()
     };
@@ -36,26 +37,40 @@ enum Mode {
     Reports,
 }
 
+/// An action requested by the tab strip, applied after the strip is drawn.
+enum TabAction {
+    Activate(usize),
+    StartRename(usize, String),
+    CommitRename(usize, String),
+    CancelRename,
+    Duplicate(usize),
+    Close(usize),
+    Add,
+}
+
 struct SlickBiApp {
     session: Session,
     mode: Mode,
     path_input: String,
+
     calc_open: bool,
     calc_name: String,
     calc_expr: String,
     calc_error: Option<String>,
+
     filter_open: bool,
     filter_field: Option<FieldId>,
     filter_op: FilterOp,
     filter_value: String,
+
+    renaming: Option<(usize, String)>,
+    pending_delete: Option<(usize, Vec<String>)>,
 }
 
 impl SlickBiApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let mut visuals = egui::Visuals::light();
-        visuals.panel_fill = egui::Color32::from_rgb(0xF6, 0xF7, 0xF9);
-        visuals.window_fill = egui::Color32::WHITE;
-        cc.egui_ctx.set_visuals(visuals);
+        install_fonts(&cc.egui_ctx);
+        install_style(&cc.egui_ctx);
 
         SlickBiApp {
             session: Session::new(),
@@ -69,6 +84,8 @@ impl SlickBiApp {
             filter_field: None,
             filter_op: FilterOp::Equal,
             filter_value: String::new(),
+            renaming: None,
+            pending_delete: None,
         }
     }
 
@@ -89,8 +106,9 @@ impl SlickBiApp {
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.heading("SlickBI");
-            ui.separator();
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("SlickBI").heading().strong());
+            ui.add_space(8.0);
 
             if ui.button("Open…").clicked()
                 && let Some(path) = rfd::FileDialog::new().pick_file()
@@ -105,19 +123,47 @@ impl SlickBiApp {
             {
                 eprintln!("failed to save: {error}");
             }
-            if self.session.has_source()
-                && ui.button("Export CSV").clicked()
-                && let Some(path) = rfd::FileDialog::new()
-                    .add_filter("CSV", &["csv"])
-                    .save_file()
-                && let Err(error) = self.session.export_csv(&path)
-            {
-                eprintln!("failed to export: {error}");
-            }
 
-            ui.separator();
-            ui.selectable_value(&mut self.mode, Mode::Charts, "Charts");
-            ui.selectable_value(&mut self.mode, Mode::Reports, "Reports");
+            ui.add_enabled_ui(self.session.has_source(), |ui| {
+                ui.menu_button("Export ▾", |ui| {
+                    if ui.button("CSV…").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("CSV", &["csv"])
+                            .save_file()
+                            && let Err(error) = self.session.export_csv(&path)
+                        {
+                            eprintln!("failed to export CSV: {error}");
+                        }
+                        ui.close();
+                    }
+                    if ui.button("Parquet…").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Parquet", &["parquet"])
+                            .save_file()
+                            && let Err(error) = self.session.export_parquet(&path)
+                        {
+                            eprintln!("failed to export Parquet: {error}");
+                        }
+                        ui.close();
+                    }
+                });
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(4.0);
+                if ui
+                    .selectable_label(self.mode == Mode::Reports, "Reports")
+                    .clicked()
+                {
+                    self.mode = Mode::Reports;
+                }
+                if ui
+                    .selectable_label(self.mode == Mode::Charts, "Charts")
+                    .clicked()
+                {
+                    self.mode = Mode::Charts;
+                }
+            });
         });
     }
 
@@ -125,99 +171,76 @@ impl SlickBiApp {
         self.worksheet_tabs(ui);
         egui::Panel::left("data")
             .resizable(true)
-            .default_size(260.0)
+            .default_size(280.0)
             .show(ui, |ui| {
-                self.data_pane(ui);
-                self.shelves(ui);
-                self.filters(ui);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    self.data_pane(ui);
+                    self.shelves(ui);
+                    self.filters(ui);
+                });
             });
         egui::CentralPanel::default().show(ui, |ui| {
             self.chart_panel(ui);
         });
     }
 
-    fn reports_ui(&mut self, ui: &mut egui::Ui) {
-        if self.session.worksheet_count() == 0 {
-            ui.centered_and_justified(|ui| {
-                ui.label(
-                    egui::RichText::new(
-                        "Open a data file to build charts, then compose them into a report.",
-                    )
-                    .weak(),
-                );
-            });
-            return;
-        }
+    fn worksheet_tabs(&mut self, ui: &mut egui::Ui) {
+        let count = self.session.worksheet_count();
+        let active = self.session.active();
+        let names: Vec<String> = self
+            .session
+            .workbook()
+            .worksheets
+            .iter()
+            .map(|w| w.name.clone())
+            .collect();
 
-        egui::Panel::left("report-palette")
-            .resizable(true)
-            .default_size(260.0)
-            .show(ui, |ui| {
-                ui.add_space(6.0);
-                ui.heading("Report");
-                ui.horizontal(|ui| {
-                    if ui.button("＋ Add chart").clicked() {
-                        let id = self
-                            .session
-                            .active_worksheet()
-                            .expect("has worksheet")
-                            .id
-                            .clone();
-                        self.session.add_chart_to_report(&id);
+        let mut action: Option<TabAction> = None;
+        ui.horizontal_wrapped(|ui| {
+            for (index, name) in names.iter().enumerate() {
+                if let Some((renaming, buffer)) = self.renaming.as_mut()
+                    && *renaming == index
+                {
+                    let response = ui.text_edit_singleline(buffer);
+                    response.request_focus();
+                    if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        action = Some(TabAction::CommitRename(index, buffer.clone()));
+                    } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        action = Some(TabAction::CancelRename);
                     }
-                    if ui.button("＋ Text").clicked() {
-                        self.session.add_text_to_report("# New section");
+                    continue;
+                }
+
+                let response = ui.selectable_label(index == active, name);
+                if response.clicked() {
+                    action = Some(TabAction::Activate(index));
+                }
+                if response.double_clicked() {
+                    action = Some(TabAction::StartRename(index, name.clone()));
+                }
+                response.context_menu(|ui| {
+                    if ui.button("Rename").clicked() {
+                        action = Some(TabAction::StartRename(index, name.clone()));
+                        ui.close();
+                    }
+                    if ui.button("Duplicate").clicked() {
+                        action = Some(TabAction::Duplicate(index));
+                        ui.close();
+                    }
+                    if ui.button("Close").clicked() {
+                        action = Some(TabAction::Close(index));
+                        ui.close();
                     }
                 });
-                ui.separator();
-
-                for i in 0..self.session.worksheet_count() {
-                    let name = self
-                        .session
-                        .workbook()
-                        .worksheets
-                        .get(i)
-                        .map(|w| w.name.clone())
-                        .unwrap_or_default();
-                    if ui.button(name).clicked() {
-                        let id = self
-                            .session
-                            .workbook()
-                            .worksheets
-                            .get(i)
-                            .expect("worksheet")
-                            .id
-                            .clone();
-                        self.session.add_chart_to_report(&id);
-                    }
-                }
-            });
-
-        egui::CentralPanel::default().show(ui, |ui| {
-            self.report_canvas(ui);
-        });
-    }
-
-    fn worksheet_tabs(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            for i in 0..self.session.worksheet_count() {
-                let name = self
-                    .session
-                    .workbook()
-                    .worksheets
-                    .get(i)
-                    .map(|w| w.name.clone())
-                    .unwrap_or_default();
-                let selected = i == self.session.active();
-                if ui.selectable_label(selected, name).clicked() {
-                    self.session.set_active(i);
-                }
             }
             if ui.small_button("＋").clicked() {
-                self.session.add_worksheet();
+                action = Some(TabAction::Add);
             }
-            ui.separator();
-            ui.label("Mark:");
+        });
+
+        ui.horizontal(|ui| {
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new("Mark").weak().small());
             for (mark, label) in [
                 (Mark::Bar, "Bar"),
                 (Mark::Line, "Line"),
@@ -233,11 +256,47 @@ impl SlickBiApp {
                 }
             }
         });
+
+        let _ = count;
+        if let Some(action) = action {
+            self.apply_tab_action(action);
+        }
+    }
+
+    fn apply_tab_action(&mut self, action: TabAction) {
+        match action {
+            TabAction::Activate(index) => self.session.set_active(index),
+            TabAction::StartRename(index, name) => self.renaming = Some((index, name)),
+            TabAction::CommitRename(index, name) => {
+                self.session.rename_worksheet(index, &name);
+                self.renaming = None;
+            }
+            TabAction::CancelRename => self.renaming = None,
+            TabAction::Duplicate(index) => self.session.duplicate_worksheet(index),
+            TabAction::Close(index) => {
+                let Some(worksheet) = self
+                    .session
+                    .workbook()
+                    .worksheets
+                    .get(index)
+                    .map(|w| w.id.clone())
+                else {
+                    return;
+                };
+                let used = self.session.used_in(&worksheet);
+                if used.is_empty() {
+                    self.session.remove_worksheet(index);
+                } else {
+                    self.pending_delete = Some((index, used));
+                }
+            }
+            TabAction::Add => self.session.add_worksheet(),
+        }
     }
 
     fn data_pane(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(6.0);
-        ui.heading("Data");
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new("DATA").weak().small().strong());
 
         let (dimensions, measures) = self.session.field_groups();
         if dimensions.is_empty() && measures.is_empty() {
@@ -253,21 +312,27 @@ impl SlickBiApp {
             return;
         }
 
-        ui.label("Drag a field onto a shelf, or click it.");
-        ui.add_space(2.0);
-        ui.separator();
-        ui.label(egui::RichText::new("Dimensions").weak());
-        for (id, name) in dimensions {
-            self.field_card(ui, id, name, Role::Dimension);
+        ui.label(
+            egui::RichText::new("Drag a field onto a shelf, or click it to place it.")
+                .weak()
+                .small(),
+        );
+        ui.add_space(4.0);
+        if !dimensions.is_empty() {
+            ui.label(egui::RichText::new("Dimensions").weak().small());
+            for (id, name) in dimensions {
+                self.field_card(ui, id, name, Role::Dimension);
+            }
         }
-        ui.add_space(8.0);
-        ui.label(egui::RichText::new("Measures").weak());
-        for (id, name) in measures {
-            self.field_card(ui, id, name, Role::Measure);
+        ui.add_space(6.0);
+        if !measures.is_empty() {
+            ui.label(egui::RichText::new("Measures").weak().small());
+            for (id, name) in measures {
+                self.field_card(ui, id, name, Role::Measure);
+            }
         }
 
         ui.add_space(10.0);
-        ui.separator();
         if ui.button("ƒ  New calculation").clicked() {
             self.calc_open = true;
             self.calc_error = None;
@@ -282,7 +347,6 @@ impl SlickBiApp {
             ui.add(button)
         });
         if inner.inner.clicked() {
-            // A click auto-places the field: dimensions on columns, measures on rows.
             let shelf = if role == Role::Measure {
                 Shelf::Y
             } else {
@@ -293,42 +357,59 @@ impl SlickBiApp {
     }
 
     fn shelves(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(10.0);
-        ui.separator();
-        ui.label(egui::RichText::new("Shelves").strong());
+        ui.add_space(12.0);
+        ui.label(egui::RichText::new("SHELVES").weak().small().strong());
         for (shelf, label, hint) in [
             (Shelf::X, "Columns", "Drop a dimension here"),
             (Shelf::Y, "Rows", "Drop a measure here"),
+            (Shelf::Color, "Color", "Drop a dimension here to split"),
         ] {
             ui.label(egui::RichText::new(label).small());
-            let assigned = self.shelf_name(shelf);
-            let (_, payload) = ui.dnd_drop_zone::<DragField, _>(shelf_frame(), |ui| {
-                if let Some(name) = &assigned {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(name).monospace().strong());
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("×").clicked() {
-                                self.session.clear(shelf);
-                            }
-                        });
-                    });
-                } else {
-                    ui.label(egui::RichText::new(hint).weak());
-                }
-            });
-            if let Some(payload) = payload {
-                self.session.assign(shelf, &payload.field);
-            }
-            ui.add_space(2.0);
+            self.shelf_drop_zone(ui, shelf, hint);
+            ui.add_space(4.0);
         }
     }
 
-    fn shelf_name(&self, shelf: Shelf) -> Option<String> {
+    fn shelf_drop_zone(&mut self, ui: &mut egui::Ui, shelf: Shelf, hint: &str) {
+        let channel = self.shelf_channel(shelf);
+        let name = channel
+            .as_ref()
+            .and_then(|c| self.field_name(&c.field))
+            .unwrap_or_default();
+
+        let (_, payload) = ui.dnd_drop_zone::<DragField, _>(shelf_frame(), |ui| {
+            if let Some(channel) = &channel {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(&name).strong().monospace());
+                    agg_combo(ui, shelf_id(shelf), channel.agg, |agg| {
+                        self.session.set_agg(shelf, agg)
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("×").clicked() {
+                            self.session.clear(shelf);
+                        }
+                    });
+                });
+            } else {
+                ui.label(egui::RichText::new(hint).weak());
+            }
+        });
+        if let Some(payload) = payload {
+            self.session.assign(shelf, &payload.field);
+        }
+    }
+
+    fn shelf_channel(&self, shelf: Shelf) -> Option<Channel> {
         let worksheet = self.session.active_worksheet()?;
-        let channel = match shelf {
-            Shelf::X => worksheet.encoding.x.as_ref(),
-            Shelf::Y => worksheet.encoding.y.as_ref(),
-        }?;
+        match shelf {
+            Shelf::X => worksheet.encoding.x.clone(),
+            Shelf::Y => worksheet.encoding.y.clone(),
+            Shelf::Color => worksheet.encoding.color.clone(),
+        }
+    }
+
+    fn field_name(&self, id: &FieldId) -> Option<String> {
+        let worksheet = self.session.active_worksheet()?;
         let model = self
             .session
             .workbook()
@@ -338,15 +419,14 @@ impl SlickBiApp {
         model
             .fields
             .iter()
-            .find(|f| f.id == channel.field)
+            .find(|f| &f.id == id)
             .map(|f| f.name.clone())
     }
 
     fn filters(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(10.0);
-        ui.separator();
+        ui.add_space(12.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Filters").strong());
+            ui.label(egui::RichText::new("FILTERS").weak().small().strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.small_button("＋").clicked() {
                     self.filter_open = true;
@@ -367,13 +447,21 @@ impl SlickBiApp {
             return;
         };
         let filters = worksheet.filters.clone();
+        if filters.is_empty() {
+            ui.label(egui::RichText::new("No filters").weak().small());
+        }
         for (index, filter) in filters.iter().enumerate() {
             ui.horizontal(|ui| {
                 let name = self
                     .field_name(&filter.field)
                     .unwrap_or_else(|| filter.field.to_string());
-                let description = describe_filter(&filter.op, &filter.values);
-                ui.label(egui::RichText::new(format!("{name} {description}")).small());
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{name} {}",
+                        describe_filter(&filter.op, &filter.values)
+                    ))
+                    .small(),
+                );
                 if ui.small_button("×").clicked() {
                     self.session.remove_filter(index);
                 }
@@ -381,37 +469,336 @@ impl SlickBiApp {
         }
     }
 
-    fn field_name(&self, id: &FieldId) -> Option<String> {
-        let worksheet = self.session.active_worksheet()?;
-        let model = self
-            .session
-            .workbook()
-            .models
-            .iter()
-            .find(|m| m.id == worksheet.model)?;
-        model
-            .fields
-            .iter()
-            .find(|f| &f.id == id)
-            .map(|f| f.name.clone())
+    fn chart_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, |ui| {
+                self.chart_toolbar(ui);
+                ui.add_space(6.0);
+
+                if let Some(error) = self.session.error() {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(0xB0, 0x30, 0x20),
+                        format!("⚠ {error}"),
+                    );
+                    ui.add_space(4.0);
+                }
+
+                egui::Frame::NONE
+                    .fill(egui::Color32::WHITE)
+                    .corner_radius(10.0)
+                    .stroke(egui::Stroke::new(
+                        1.0,
+                        egui::Color32::from_rgb(0xE2, 0xE6, 0xEB),
+                    ))
+                    .inner_margin(egui::Margin::same(10))
+                    .show(ui, |ui| match self.session.scene() {
+                        Some(scene) => draw_scene(ui, scene),
+                        None => {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), 360.0),
+                                egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new(
+                                            "Put a dimension on Columns and a measure on Rows \
+                                             to draw a chart.",
+                                        )
+                                        .weak(),
+                                    );
+                                },
+                            );
+                        }
+                    });
+            });
     }
 
-    fn chart_panel(&mut self, ui: &mut egui::Ui) {
-        if let Some(error) = self.session.error() {
-            ui.colored_label(egui::Color32::from_rgb(0xB0, 0x30, 0x20), error);
-        }
-        match self.session.scene() {
-            Some(scene) => draw_scene(ui, scene),
-            None => {
-                ui.centered_and_justified(|ui| {
-                    ui.label(
-                        egui::RichText::new(
-                            "Put a dimension on Columns and a measure on Rows to draw a chart.",
-                        )
-                        .weak(),
-                    );
+    fn chart_toolbar(&mut self, ui: &mut egui::Ui) {
+        let sort = self.sort_state();
+        let limit = self
+            .session
+            .active_worksheet()
+            .and_then(|w| w.limit)
+            .unwrap_or(0);
+        let used_in = self
+            .session
+            .active_worksheet()
+            .map(|w| self.session.used_in(&w.id))
+            .unwrap_or_default();
+
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Sort").small().weak());
+            let label = match sort {
+                None => "None",
+                Some((Shelf::X, false)) => "Columns ↑",
+                Some((Shelf::X, true)) => "Columns ↓",
+                Some((Shelf::Y, false)) => "Rows ↑",
+                Some((Shelf::Y, true)) => "Rows ↓",
+                Some((Shelf::Color, _)) => "None",
+            };
+            egui::ComboBox::from_id_salt("sort-combo")
+                .selected_text(label)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(sort.is_none(), "None").clicked() {
+                        self.session.clear_sort();
+                    }
+                    for (shelf, label, descending) in [
+                        (Shelf::X, "Columns ↑", false),
+                        (Shelf::X, "Columns ↓", true),
+                        (Shelf::Y, "Rows ↑", false),
+                        (Shelf::Y, "Rows ↓", true),
+                    ] {
+                        if ui
+                            .selectable_label(sort == Some((shelf, descending)), label)
+                            .clicked()
+                        {
+                            self.session.set_sort(shelf, descending);
+                        }
+                    }
                 });
+
+            ui.add_space(10.0);
+            ui.label(egui::RichText::new("Limit").small().weak());
+            let mut value = limit;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut value)
+                        .range(0..=1_000_000u32)
+                        .speed(1.0),
+                )
+                .changed()
+            {
+                self.session
+                    .set_limit(if value == 0 { None } else { Some(value) });
             }
+
+            if !used_in.is_empty() {
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(format!("Used in: {}", used_in.join(", ")))
+                        .small()
+                        .weak(),
+                );
+            }
+        });
+    }
+
+    fn sort_state(&self) -> Option<(Shelf, bool)> {
+        let worksheet = self.session.active_worksheet()?;
+        let key = worksheet.sort.first()?;
+        let x = worksheet.encoding.x.as_ref();
+        let y = worksheet.encoding.y.as_ref();
+        if x.is_some_and(|c| c.field == key.field) {
+            Some((Shelf::X, key.descending))
+        } else if y.is_some_and(|c| c.field == key.field) {
+            Some((Shelf::Y, key.descending))
+        } else {
+            None
+        }
+    }
+
+    fn reports_ui(&mut self, ui: &mut egui::Ui) {
+        if self.session.worksheet_count() == 0 {
+            ui.centered_and_justified(|ui| {
+                ui.label(
+                    egui::RichText::new(
+                        "Open a data file to build charts, then compose them into a report.",
+                    )
+                    .weak(),
+                );
+            });
+            return;
+        }
+
+        egui::Panel::left("report-palette")
+            .resizable(true)
+            .default_size(300.0)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    self.report_palette(ui);
+                });
+            });
+
+        egui::CentralPanel::default().show(ui, |ui| {
+            self.report_canvas(ui);
+        });
+    }
+
+    fn report_palette(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new("REPORT").weak().small().strong());
+
+        let reports: Vec<(usize, String)> = self
+            .session
+            .reports()
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (i, r.name.clone()))
+            .collect();
+        let active = self.session.active_report();
+
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("report-combo")
+                .selected_text(
+                    reports
+                        .iter()
+                        .find(|(i, _)| *i == active)
+                        .map(|(_, n)| n.clone())
+                        .unwrap_or_else(|| "None".to_owned()),
+                )
+                .show_ui(ui, |ui| {
+                    for (index, name) in &reports {
+                        if ui.selectable_label(*index == active, name).clicked() {
+                            self.session.set_active_report(*index);
+                        }
+                    }
+                });
+            if ui.button("＋ New").clicked() {
+                let name = format!("Report {}", self.session.reports().len() + 1);
+                self.session.add_report(&name);
+            }
+        });
+
+        if self.session.reports().is_empty() {
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new("Create a report, then add charts and text to it.")
+                    .weak()
+                    .small(),
+            );
+            return;
+        }
+
+        let theme = self
+            .session
+            .active_report_doc()
+            .and_then(|r| r.theme.clone());
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Theme").small().weak());
+            let label = theme.as_deref().unwrap_or("Light");
+            egui::ComboBox::from_id_salt("theme-combo")
+                .selected_text(label)
+                .show_ui(ui, |ui| {
+                    for (value, name) in [
+                        (None, "Light"),
+                        (Some("slate".to_owned()), "Slate"),
+                        (Some("warm".to_owned()), "Warm"),
+                    ] {
+                        if ui.selectable_label(theme == value, name).clicked() {
+                            self.session.set_report_theme(active, value);
+                        }
+                    }
+                });
+        });
+
+        ui.separator();
+        ui.label(egui::RichText::new("ADD").weak().small().strong());
+        if ui.button("＋ Add active chart").clicked()
+            && let Some(worksheet) = self.session.active_worksheet()
+        {
+            let id = worksheet.id.clone();
+            self.session.add_chart_to_report(&id);
+        }
+        ui.label(egui::RichText::new("Worksheets").weak().small());
+        let worksheets: Vec<(usize, String)> = self
+            .session
+            .workbook()
+            .worksheets
+            .iter()
+            .enumerate()
+            .map(|(i, w)| (i, w.name.clone()))
+            .collect();
+        for (index, name) in worksheets {
+            if ui.button(format!("＋ {name}")).clicked() {
+                let id = self.session.workbook().worksheets[index].id.clone();
+                self.session.add_chart_to_report(&id);
+            }
+        }
+        if ui.button("＋ Text block").clicked() {
+            self.session.add_text_to_report("# New section");
+        }
+
+        ui.separator();
+        ui.label(egui::RichText::new("ELEMENTS").weak().small().strong());
+        self.report_elements(ui);
+    }
+
+    fn report_elements(&mut self, ui: &mut egui::Ui) {
+        let report = self.session.active_report();
+        let Some(doc) = self.session.reports().get(report) else {
+            return;
+        };
+        let count = doc.elements.len();
+        if count == 0 {
+            ui.label(egui::RichText::new("Nothing yet").weak().small());
+        }
+
+        let mut remove = None;
+        for index in 0..count {
+            let worksheet = self
+                .session
+                .chart_element(report, index)
+                .map(|(id, _)| id.clone());
+            if let Some(worksheet) = worksheet {
+                let name = self
+                    .session
+                    .workbook()
+                    .worksheets
+                    .iter()
+                    .find(|w| w.id == worksheet)
+                    .map(|w| w.name.clone())
+                    .unwrap_or_else(|| "Chart".to_owned());
+                let title = self
+                    .session
+                    .chart_title(report, index)
+                    .map(|t| t.to_owned())
+                    .unwrap_or_default();
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(format!("Chart · {name}")).small());
+                    if ui.small_button("×").clicked() {
+                        remove = Some(index);
+                    }
+                });
+                let mut buffer = title;
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut buffer)
+                            .hint_text("Title override")
+                            .desired_width(f32::INFINITY),
+                    )
+                    .changed()
+                {
+                    self.session.set_chart_title(report, index, &buffer);
+                }
+            }
+
+            if let Some(text) = self
+                .session
+                .text_element(report, index)
+                .map(|t| t.to_owned())
+            {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Text").small());
+                    if ui.small_button("×").clicked() {
+                        remove = Some(index);
+                    }
+                });
+                let mut buffer = text;
+                if ui
+                    .add(
+                        egui::TextEdit::multiline(&mut buffer)
+                            .desired_rows(2)
+                            .desired_width(f32::INFINITY),
+                    )
+                    .changed()
+                {
+                    self.session.set_text_element(report, index, &buffer);
+                }
+            }
+        }
+
+        if let Some(index) = remove {
+            self.session.remove_report_element(report, index);
         }
     }
 
@@ -419,7 +806,7 @@ impl SlickBiApp {
         if self.session.reports().is_empty() {
             ui.centered_and_justified(|ui| {
                 ui.label(
-                    egui::RichText::new("No reports yet — add charts from the panel on the left.")
+                    egui::RichText::new("No reports yet — create one in the panel on the left.")
                         .weak(),
                 );
             });
@@ -430,45 +817,92 @@ impl SlickBiApp {
             return;
         };
 
-        // Fit the report canvas to the available width.
         let available = ui.available_size();
-        let scale = (available.x / report.canvas.width as f32).clamp(0.2, 2.0);
+        let scale = (available.x / report.canvas.width as f32).clamp(0.2, 1.4);
+        let size = egui::vec2(
+            report.canvas.width as f32 * scale,
+            report.canvas.height as f32 * scale,
+        );
+        let (canvas_rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        let painter = ui.painter_at(canvas_rect);
 
-        let mut scenes: Vec<(usize, Option<Scene>)> = Vec::new();
+        let (background, ink) = theme_colors(report.theme.as_deref());
+        painter.rect_filled(canvas_rect, 8.0, background);
+
+        // Report title.
+        painter.text(
+            canvas_rect.min + egui::vec2(20.0, 18.0),
+            egui::Align2::LEFT_TOP,
+            &report.name,
+            egui::FontId::proportional(22.0),
+            ink,
+        );
+
+        let content_top = canvas_rect.min.y + 52.0;
+        let report_index = self.session.active_report();
+        let mut remove = None;
+
         for (index, element) in report.elements.iter().enumerate() {
-            if let Some(worksheet) = element.worksheet() {
-                let size = (element.frame.width as f32, element.frame.height as f32);
-                let scene = self.session.scene_for(worksheet, size).ok().flatten();
-                scenes.push((index, scene));
-            }
-        }
-
-        for (index, scene) in scenes {
-            let element = &report.elements[index];
             let rect = egui::Rect::from_min_size(
-                ui.min_rect().min
-                    + egui::vec2(
-                        element.frame.x as f32 * scale,
-                        element.frame.y as f32 * scale,
-                    ),
+                egui::pos2(
+                    canvas_rect.min.x + element.frame.x as f32 * scale,
+                    content_top + element.frame.y as f32 * scale,
+                ),
                 egui::vec2(
                     element.frame.width as f32 * scale,
                     element.frame.height as f32 * scale,
-                ),
+                )
+                .max(egui::vec2(40.0, 30.0)),
             );
-            if let Some(scene) = scene {
-                draw_scene_in(ui, &scene, rect);
-            } else {
-                let painter = ui.painter_at(rect);
-                painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(0xFA, 0xFB, 0xFC));
-                painter.text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "No shelves yet",
-                    egui::FontId::proportional(13.0),
-                    egui::Color32::GRAY,
-                );
+
+            match &element.kind {
+                slickbi_spec::ElementKind::Chart { chart } => {
+                    let scaled = (rect.width(), rect.height());
+                    let scene = self
+                        .session
+                        .scene_for(&chart.worksheet, scaled)
+                        .ok()
+                        .flatten();
+                    match scene {
+                        Some(scene) => {
+                            draw_scene_in(ui, &scene, rect);
+                        }
+                        None => {
+                            painter.rect_filled(
+                                rect,
+                                6.0,
+                                egui::Color32::from_rgba_unmultiplied(0, 0, 0, 12),
+                            );
+                            painter.text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "No shelves yet",
+                                egui::FontId::proportional(13.0),
+                                egui::Color32::from_gray(140),
+                            );
+                        }
+                    }
+                }
+                slickbi_spec::ElementKind::Text { text } => {
+                    draw_text_block(&painter, rect, &text.markdown, ink);
+                }
             }
+
+            let remove_rect = egui::Rect::from_min_size(
+                rect.right_top() + egui::vec2(-24.0, 4.0),
+                egui::vec2(20.0, 20.0),
+            );
+            if ui
+                .put(remove_rect, egui::Button::new("×").small())
+                .on_hover_text("Remove from report")
+                .clicked()
+            {
+                remove = Some(index);
+            }
+        }
+
+        if let Some(index) = remove {
+            self.session.remove_report_element(report_index, index);
         }
     }
 
@@ -481,12 +915,18 @@ impl SlickBiApp {
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
+            .default_width(420.0)
             .show(ctx, |ui| {
-                ui.label("Field name");
+                ui.label(egui::RichText::new("Field name").small().weak());
                 ui.text_edit_singleline(&mut self.calc_name);
-                ui.add_space(4.0);
-                ui.label("Expression");
-                ui.text_edit_multiline(&mut self.calc_expr);
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("Expression").small().weak());
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.calc_expr)
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY)
+                        .code_editor(),
+                );
                 ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(
@@ -496,11 +936,12 @@ impl SlickBiApp {
                     .small(),
                 );
                 if let Some(error) = &self.calc_error {
+                    ui.add_space(4.0);
                     ui.colored_label(egui::Color32::from_rgb(0xB0, 0x30, 0x20), error);
                 }
-                ui.add_space(6.0);
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Add").clicked() && !self.calc_name.is_empty() {
+                    if ui.button("Add field").clicked() && !self.calc_name.trim().is_empty() {
                         let name = self.calc_name.trim().to_owned();
                         let expr = self.calc_expr.clone();
                         match self.session.add_calculated_field(&name, &expr) {
@@ -531,28 +972,30 @@ impl SlickBiApp {
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
+            .default_width(360.0)
             .show(ctx, |ui| {
                 let fields: Vec<(FieldId, String)> = {
                     let (d, m) = self.session.field_groups();
                     d.into_iter().chain(m).collect()
                 };
-                if !fields.is_empty() {
-                    let selected = self.filter_field.clone();
-                    egui::ComboBox::from_id_salt("filter-field")
-                        .selected_text(
-                            fields
-                                .iter()
-                                .find(|(id, _)| Some(id) == selected.as_ref())
-                                .map(|(_, n)| n.clone())
-                                .unwrap_or_else(|| "Field".to_owned()),
-                        )
-                        .show_ui(ui, |ui| {
-                            for (id, name) in &fields {
-                                ui.selectable_value(&mut self.filter_field, Some(id.clone()), name);
-                            }
-                        });
-                }
+                ui.label(egui::RichText::new("Field").small().weak());
+                let selected = self.filter_field.clone();
+                egui::ComboBox::from_id_salt("filter-field")
+                    .selected_text(
+                        fields
+                            .iter()
+                            .find(|(id, _)| Some(id) == selected.as_ref())
+                            .map(|(_, n)| n.clone())
+                            .unwrap_or_else(|| "Field".to_owned()),
+                    )
+                    .show_ui(ui, |ui| {
+                        for (id, name) in &fields {
+                            ui.selectable_value(&mut self.filter_field, Some(id.clone()), name);
+                        }
+                    });
 
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("Condition").small().weak());
                 egui::ComboBox::from_id_salt("filter-op")
                     .selected_text(op_label(self.filter_op))
                     .show_ui(ui, |ui| {
@@ -561,10 +1004,11 @@ impl SlickBiApp {
                         }
                     });
 
-                ui.label("Value");
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("Value").small().weak());
                 ui.text_edit_singleline(&mut self.filter_value);
 
-                ui.add_space(6.0);
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Apply").clicked()
                         && let Some(field) = self.filter_field.clone()
@@ -581,6 +1025,48 @@ impl SlickBiApp {
                 });
             });
         self.filter_open = open;
+    }
+
+    fn delete_window(&mut self, ctx: &egui::Context) {
+        let Some((index, used)) = self.pending_delete.clone() else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new("Delete worksheet?")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "This worksheet is used in {} report(s):",
+                    used.len()
+                ));
+                for name in &used {
+                    ui.label(egui::RichText::new(format!("• {name}")).strong());
+                }
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(
+                        "Those report elements will show a placeholder until you point them \
+                         at another worksheet.",
+                    )
+                    .weak()
+                    .small(),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Delete anyway").clicked() {
+                        self.session.remove_worksheet(index);
+                        self.pending_delete = None;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.pending_delete = None;
+                    }
+                });
+            });
+        if !open {
+            self.pending_delete = None;
+        }
     }
 }
 
@@ -603,10 +1089,11 @@ impl eframe::App for SlickBiApp {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.centered_and_justified(|ui| {
                     ui.vertical_centered(|ui| {
-                        ui.heading("SlickBI");
-                        ui.add_space(8.0);
+                        ui.add_space(40.0);
+                        ui.label(egui::RichText::new("SlickBI").heading().strong());
+                        ui.add_space(6.0);
                         ui.label("Drop a CSV, Parquet or JSON file anywhere to begin.");
-                        ui.add_space(8.0);
+                        ui.add_space(10.0);
                         ui.horizontal(|ui| {
                             ui.label("Path:");
                             ui.text_edit_singleline(&mut self.path_input);
@@ -626,40 +1113,147 @@ impl eframe::App for SlickBiApp {
 
         self.calc_window(ui.ctx());
         self.filter_window(ui.ctx());
+        self.delete_window(ui.ctx());
     }
+}
+
+fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "inter".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../render/fonts/Inter-Regular.ttf"
+        ))),
+    );
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        family.insert(0, "inter".to_owned());
+    }
+    ctx.set_fonts(fonts);
+}
+
+fn install_style(ctx: &egui::Context) {
+    let mut visuals = egui::Visuals::light();
+    visuals.panel_fill = egui::Color32::from_rgb(0xF5, 0xF6, 0xF8);
+    visuals.window_fill = egui::Color32::WHITE;
+    visuals.extreme_bg_color = egui::Color32::WHITE;
+    visuals.selection.bg_fill = egui::Color32::from_rgb(0x0B, 0x6E, 0x99);
+    visuals.hyperlink_color = egui::Color32::from_rgb(0x0B, 0x6E, 0x99);
+    for widget in [
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        widget.corner_radius = egui::CornerRadius::same(6);
+    }
+    ctx.set_visuals(visuals);
+
+    ctx.all_styles_mut(|style| {
+        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        style.spacing.button_padding = egui::vec2(10.0, 5.0);
+        style.spacing.interact_size.y = 24.0;
+    });
 }
 
 fn shelf_frame() -> egui::Frame {
     egui::Frame::NONE
-        .fill(egui::Color32::from_rgb(0xF0, 0xF2, 0xF5))
-        .corner_radius(6.0)
-        .inner_margin(egui::Margin::symmetric(8, 6))
+        .fill(egui::Color32::from_rgb(0xEC, 0xEF, 0xF3))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+}
+
+fn shelf_id(shelf: Shelf) -> &'static str {
+    match shelf {
+        Shelf::X => "agg-x",
+        Shelf::Y => "agg-y",
+        Shelf::Color => "agg-color",
+    }
+}
+
+fn agg_combo(ui: &mut egui::Ui, salt: &'static str, current: Agg, mut set: impl FnMut(Agg)) {
+    const OPTIONS: [(Agg, &str); 8] = [
+        (Agg::None, "None"),
+        (Agg::Sum, "Sum"),
+        (Agg::Average, "Avg"),
+        (Agg::Median, "Median"),
+        (Agg::Min, "Min"),
+        (Agg::Max, "Max"),
+        (Agg::Count, "Count"),
+        (Agg::CountDistinct, "Distinct"),
+    ];
+    egui::ComboBox::from_id_salt(salt)
+        .width(76.0)
+        .selected_text(
+            OPTIONS
+                .iter()
+                .find(|(agg, _)| *agg == current)
+                .map(|(_, label)| *label)
+                .unwrap_or("None"),
+        )
+        .show_ui(ui, |ui| {
+            for (agg, label) in OPTIONS {
+                if ui.selectable_label(agg == current, label).clicked() {
+                    set(agg);
+                }
+            }
+        });
+}
+
+fn theme_colors(theme: Option<&str>) -> (egui::Color32, egui::Color32) {
+    match theme {
+        Some("slate") => (
+            egui::Color32::from_rgb(0x1B, 0x1F, 0x24),
+            egui::Color32::from_rgb(0xEC, 0xEF, 0xF2),
+        ),
+        Some("warm") => (
+            egui::Color32::from_rgb(0xFB, 0xF7, 0xF0),
+            egui::Color32::from_rgb(0x2B, 0x26, 0x22),
+        ),
+        _ => (
+            egui::Color32::WHITE,
+            egui::Color32::from_rgb(0x24, 0x2C, 0x36),
+        ),
+    }
+}
+
+fn draw_text_block(painter: &egui::Painter, rect: egui::Rect, markdown: &str, ink: egui::Color32) {
+    let mut y = rect.min.y;
+    for line in markdown.lines() {
+        let (text, size) = if let Some(rest) = line.strip_prefix("# ") {
+            (rest, 20.0)
+        } else if let Some(rest) = line.strip_prefix("## ") {
+            (rest, 16.0)
+        } else {
+            (line, 13.0)
+        };
+        if !text.is_empty() {
+            painter.text(
+                egui::pos2(rect.min.x, y),
+                egui::Align2::LEFT_TOP,
+                text,
+                egui::FontId::proportional(size),
+                ink,
+            );
+        }
+        y += size + 6.0;
+        if y > rect.max.y {
+            break;
+        }
+    }
 }
 
 fn describe_filter(op: &FilterOp, values: &[Scalar]) -> String {
+    let first = || values.first().map(scalar_text).unwrap_or_default();
     match op {
-        FilterOp::Equal => format!("= {}", values.first().map(scalar_text).unwrap_or_default()),
-        FilterOp::NotEqual => format!("≠ {}", values.first().map(scalar_text).unwrap_or_default()),
-        FilterOp::Greater => format!("> {}", values.first().map(scalar_text).unwrap_or_default()),
-        FilterOp::GreaterOrEqual => {
-            format!("≥ {}", values.first().map(scalar_text).unwrap_or_default())
-        }
-        FilterOp::Less => format!("< {}", values.first().map(scalar_text).unwrap_or_default()),
-        FilterOp::LessOrEqual => {
-            format!("≤ {}", values.first().map(scalar_text).unwrap_or_default())
-        }
-        FilterOp::Contains => format!(
-            "contains {}",
-            values.first().map(scalar_text).unwrap_or_default()
-        ),
-        FilterOp::StartsWith => format!(
-            "starts with {}",
-            values.first().map(scalar_text).unwrap_or_default()
-        ),
-        FilterOp::EndsWith => format!(
-            "ends with {}",
-            values.first().map(scalar_text).unwrap_or_default()
-        ),
+        FilterOp::Equal => format!("= {}", first()),
+        FilterOp::NotEqual => format!("≠ {}", first()),
+        FilterOp::Greater => format!("> {}", first()),
+        FilterOp::GreaterOrEqual => format!("≥ {}", first()),
+        FilterOp::Less => format!("< {}", first()),
+        FilterOp::LessOrEqual => format!("≤ {}", first()),
+        FilterOp::Contains => format!("contains {}", first()),
+        FilterOp::StartsWith => format!("starts with {}", first()),
+        FilterOp::EndsWith => format!("ends with {}", first()),
         FilterOp::IsNull => "is null".to_owned(),
         FilterOp::IsNotNull => "is not null".to_owned(),
         FilterOp::In => format!(
@@ -680,7 +1274,7 @@ fn describe_filter(op: &FilterOp, values: &[Scalar]) -> String {
         ),
         FilterOp::Between => format!(
             "between {} and {}",
-            values.first().map(scalar_text).unwrap_or_default(),
+            first(),
             values.get(1).map(scalar_text).unwrap_or_default()
         ),
     }
@@ -695,7 +1289,7 @@ fn scalar_text(value: &Scalar) -> String {
     }
 }
 
-const OP_OPTIONS: [(FilterOp, &str); 10] = [
+const OP_OPTIONS: [(FilterOp, &str); 12] = [
     (FilterOp::Equal, "="),
     (FilterOp::NotEqual, "≠"),
     (FilterOp::Greater, ">"),
@@ -706,6 +1300,8 @@ const OP_OPTIONS: [(FilterOp, &str); 10] = [
     (FilterOp::StartsWith, "starts with"),
     (FilterOp::EndsWith, "ends with"),
     (FilterOp::IsNull, "is null"),
+    (FilterOp::IsNotNull, "is not null"),
+    (FilterOp::Between, "between"),
 ];
 
 fn op_label(op: FilterOp) -> &'static str {
@@ -782,6 +1378,25 @@ fn draw_scene_in(ui: &mut egui::Ui, scene: &Scene, rect: egui::Rect) {
     }
 
     let font = egui::FontId::proportional(11.0);
+    // Legend across the top, when the chart splits by colour.
+    if !scene.legend.is_empty() {
+        let mut x = rect.min.x + scene.plot.x;
+        let center_y = rect.min.y + scene.plot.y / 2.0;
+        for entry in &scene.legend {
+            let color = to_color(entry.color);
+            let swatch =
+                egui::Rect::from_center_size(egui::pos2(x + 5.0, center_y), egui::vec2(10.0, 10.0));
+            painter.rect_filled(swatch, 2.0, color);
+            let text_rect = painter.text(
+                egui::pos2(x + 16.0, center_y),
+                egui::Align2::LEFT_CENTER,
+                &entry.label,
+                font.clone(),
+                egui::Color32::from_rgb(0x3D, 0x47, 0x54),
+            );
+            x = text_rect.right() + 16.0;
+        }
+    }
     for tick in &scene.y_axis.ticks {
         painter.text(
             egui::pos2(plot.min.x - 6.0, rect.min.y + tick.position),

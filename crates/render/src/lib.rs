@@ -48,6 +48,7 @@ pub fn rasterize(scene: &Scene, scale: f32) -> Pixmap {
 
     canvas.draw_axes(scene);
     canvas.draw_series(scene);
+    canvas.draw_legend(scene);
     canvas.pixmap
 }
 
@@ -200,6 +201,33 @@ impl Canvas {
         }
     }
 
+    /// Draws a horizontal legend across the top margin, one swatch and label per entry.
+    fn draw_legend(&mut self, scene: &Scene) {
+        if scene.legend.is_empty() {
+            return;
+        }
+        let scale = self.scale;
+        let swatch = 10.0 * scale;
+        let mut x = scene.plot.x * scale;
+        let center_y = (scene.plot.y * scale) / 2.0;
+        for entry in &scene.legend {
+            if let Some(rect) = Rect::from_xywh(x, center_y - swatch / 2.0, swatch, swatch) {
+                self.pixmap
+                    .fill_rect(rect, &solid(entry.color), Transform::identity(), None);
+            }
+            x += swatch + 4.0 * scale;
+            let width = self.text(
+                &entry.label,
+                LABEL_SIZE,
+                x,
+                center_y - LABEL_SIZE * scale / 2.0,
+                &TEXT,
+                Anchor::Left,
+            );
+            x += width + 14.0 * scale;
+        }
+    }
+
     fn bar(&mut self, bar: &Bar, color: [f32; 4]) {
         let rect = Rect::from_xywh(
             bar.x * self.scale,
@@ -277,7 +305,15 @@ impl Canvas {
             .stroke_path(&line, &solid(*color), stroke, Transform::identity(), None);
     }
 
-    fn text(&mut self, text: &str, size: f32, x: f32, y: f32, color: &[f32; 4], anchor: Anchor) {
+    fn text(
+        &mut self,
+        text: &str,
+        size: f32,
+        x: f32,
+        y: f32,
+        color: &[f32; 4],
+        anchor: Anchor,
+    ) -> f32 {
         let px = size * self.scale;
         let scale = PxScale::from(px);
         let factor = px / self.font.height_unscaled();
@@ -303,6 +339,7 @@ impl Canvas {
         let start = match anchor {
             Anchor::Center => x - width / 2.0,
             Anchor::Right => x - width,
+            Anchor::Left => x,
         };
         let ascent = self.font.ascent_unscaled() * factor;
         let baseline = y + ascent;
@@ -330,11 +367,13 @@ impl Canvas {
                 );
             }
         }
+        width
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Anchor {
+    Left,
     Center,
     Right,
 }
