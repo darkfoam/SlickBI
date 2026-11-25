@@ -994,6 +994,20 @@ mod tests {
     }
 
     #[test]
+    fn a_horizontal_bar_runs_through_the_planner() {
+        let (mut session, path) = loaded();
+        // A dimension on rows and a measure on columns gives horizontal bars.
+        session.assign(Shelf::Y, &FieldId::new("region"));
+        session.assign(Shelf::X, &FieldId::new("amount"));
+        let scene = session
+            .scene()
+            .unwrap_or_else(|| panic!("no scene: {:?}", session.error()));
+        assert!(scene.y_axis.categorical, "categories belong on the y axis");
+        assert!(!scene.x_axis.categorical, "values belong on the x axis");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
     fn a_color_shelf_splits_bars_into_series() {
         let path = temp("color.csv");
         std::fs::write(

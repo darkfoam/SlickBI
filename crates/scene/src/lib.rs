@@ -242,18 +242,21 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
     };
     let plot = plot_rect(spec.size, margins);
 
-    let x = read_x(spec.batches, x_index)?;
-    let y = read_numeric(spec.batches, y_index)?;
+    let x = read_axis(spec.batches, x_index, false)?;
+    let y = read_axis(spec.batches, y_index, true)?;
     let color = color_index
         .map(|index| read_labels(spec.batches, index))
         .transpose()?;
 
+    // Bars read either axis as the categories; the other marks need a numeric y.
+    let numeric_y = |y: XData| y.into_numeric().ok_or(SceneError::UndrawableYType);
+
     let mut scene = match spec.mark {
         Mark::Bar => bar_scene(spec, plot, x, y, color),
-        Mark::Line => line_scene(spec, plot, x, y, false, color),
-        Mark::Area => line_scene(spec, plot, x, y, true, color),
-        Mark::Point => point_scene(spec, plot, x, y, color),
-        Mark::Arc => arc_scene(spec, plot, x, y),
+        Mark::Line => line_scene(spec, plot, x, numeric_y(y)?, false, color),
+        Mark::Area => line_scene(spec, plot, x, numeric_y(y)?, true, color),
+        Mark::Point => point_scene(spec, plot, x, numeric_y(y)?, color),
+        Mark::Arc => arc_scene(spec, plot, x, numeric_y(y)?),
         other => Err(SceneError::UnsupportedMark { mark: other }),
     }?;
 
@@ -290,37 +293,68 @@ fn bar_scene(
     spec: &SceneSpec<'_>,
     plot: Rect,
     x: XData,
-    y: Vec<Option<f64>>,
+    y: XData,
     color: Option<Vec<Option<String>>>,
 ) -> Result<Scene, SceneError> {
-    let categories = x.as_categorical().ok_or(SceneError::CategoricalXExpected)?;
+    // One axis is categorical (the categories) and the other numeric (the values). Categories on
+    // x give vertical columns; categories on y give horizontal bars.
+    let (vertical, categories, values) = match (&x, &y) {
+        (XData::Categorical(categories), XData::Numeric(values)) => {
+            (true, categories.clone(), values.clone())
+        }
+        (XData::Numeric(values), XData::Categorical(categories)) => {
+            (false, categories.clone(), values.clone())
+        }
+        (XData::Numeric(_), XData::Numeric(_)) => return Err(SceneError::CategoricalXExpected),
+        (XData::Categorical(_), XData::Categorical(_)) => {
+            return Err(SceneError::NumericYExpected);
+        }
+    };
 
-    let (distinct, category_of) = dedup(categories);
-    let groups = series_groups(&color, y.len());
+    let (distinct, category_of) = dedup(&categories);
+    let groups = series_groups(&color, values.len());
 
-    let band = plot.width / distinct.len().max(1) as f32;
+    let band = if vertical {
+        plot.width / distinct.len().max(1) as f32
+    } else {
+        plot.height / distinct.len().max(1) as f32
+    };
     let sub_band = band / groups.len().max(1) as f32;
-    let bar_width = sub_band * 0.7;
+    let thickness = sub_band * 0.7;
 
-    let y_scale = LinearScale::with_zero(numeric_domain(&y));
+    let scale = LinearScale::with_zero(numeric_domain(&values));
 
     let mut series = Vec::with_capacity(groups.len());
     for (index, (label, rows)) in groups.iter().enumerate() {
         let mut bars = Vec::new();
         for &row in rows {
-            let Some(value) = y[row] else {
+            let Some(value) = values.get(row).copied().flatten() else {
                 continue;
             };
             let category = category_of[row];
-            let center = plot.x + band * category as f32 + sub_band * index as f32 + sub_band / 2.0;
-            let top = y_scale.map_y(value, plot.y, plot.height);
-            let bottom = y_scale.map_y(0.0, plot.y, plot.height);
-            bars.push(Bar {
-                x: center - bar_width / 2.0,
-                y: top,
-                width: bar_width,
-                height: bottom - top,
-            });
+            if vertical {
+                let center =
+                    plot.x + band * category as f32 + sub_band * index as f32 + sub_band / 2.0;
+                let top = scale.map_y(value, plot.y, plot.height);
+                let bottom = scale.map_y(0.0, plot.y, plot.height);
+                bars.push(Bar {
+                    x: center - thickness / 2.0,
+                    y: top,
+                    width: thickness,
+                    height: bottom - top,
+                });
+            } else {
+                let center =
+                    plot.y + band * category as f32 + sub_band * index as f32 + sub_band / 2.0;
+                let start = scale.map(0.0, plot.x, plot.width);
+                let end = scale.map(value, plot.x, plot.width);
+                bars.push(Bar {
+                    x: start.min(end),
+                    y: center - thickness / 2.0,
+                    width: (end - start).abs(),
+                    height: thickness,
+                });
+            }
         }
         series.push(Series {
             label: label.clone(),
@@ -329,24 +363,49 @@ fn bar_scene(
         });
     }
 
-    let ticks = distinct
-        .iter()
-        .enumerate()
-        .map(|(index, category)| Tick {
-            position: plot.x + band * index as f32 + band / 2.0,
-            text: category.as_ref().cloned().unwrap_or_default(),
-        })
-        .collect();
+    let (x_axis, y_axis) = if vertical {
+        let ticks = distinct
+            .iter()
+            .enumerate()
+            .map(|(index, category)| Tick {
+                position: plot.x + band * index as f32 + band / 2.0,
+                text: category.as_ref().cloned().unwrap_or_default(),
+            })
+            .collect();
+        (
+            Axis {
+                ticks,
+                categorical: true,
+            },
+            numeric_axis(&scale, plot),
+        )
+    } else {
+        let ticks = distinct
+            .iter()
+            .enumerate()
+            .map(|(index, category)| Tick {
+                position: plot.y + band * index as f32 + band / 2.0,
+                text: category.as_ref().cloned().unwrap_or_default(),
+            })
+            .collect();
+        (
+            Axis {
+                ticks: linear_ticks(&scale, plot, false),
+                categorical: false,
+            },
+            Axis {
+                ticks,
+                categorical: true,
+            },
+        )
+    };
 
     Ok(Scene {
         width: spec.size.0,
         height: spec.size.1,
         plot,
-        x_axis: Axis {
-            ticks,
-            categorical: true,
-        },
-        y_axis: numeric_axis(&y_scale, plot),
+        x_axis,
+        y_axis,
         series,
         legend: Vec::new(),
     })
@@ -552,6 +611,14 @@ impl XData {
             XData::Categorical(_) => None,
         }
     }
+
+    /// Consumes the column as numeric values, or returns `None` when it is categorical.
+    fn into_numeric(self) -> Option<Vec<Option<f64>>> {
+        match self {
+            XData::Numeric(values) => Some(values),
+            XData::Categorical(_) => None,
+        }
+    }
 }
 
 /// A linear mapping from a data domain to a pixel range.
@@ -690,7 +757,23 @@ fn format_number(value: f64) -> String {
     }
 }
 
-fn read_x(batches: &[RecordBatch], index: usize) -> Result<XData, SceneError> {
+/// Reads one axis as either categorical (text) or numeric, depending on the column's type.
+fn read_axis(batches: &[RecordBatch], index: usize, y: bool) -> Result<XData, SceneError> {
+    let mixed = || {
+        if y {
+            SceneError::MixedYTypes
+        } else {
+            SceneError::MixedXTypes
+        }
+    };
+    let undrawable = || {
+        if y {
+            SceneError::UndrawableYType
+        } else {
+            SceneError::UndrawableXType
+        }
+    };
+
     let mut categorical = Vec::new();
     let mut numeric = Vec::new();
     let mut is_categorical = None;
@@ -699,7 +782,7 @@ fn read_x(batches: &[RecordBatch], index: usize) -> Result<XData, SceneError> {
         let column = batch.column(index);
         if let Some(array) = column.as_any().downcast_ref::<StringArray>() {
             if is_categorical == Some(false) {
-                return Err(SceneError::MixedXTypes);
+                return Err(mixed());
             }
             is_categorical = Some(true);
             for i in 0..array.len() {
@@ -707,7 +790,7 @@ fn read_x(batches: &[RecordBatch], index: usize) -> Result<XData, SceneError> {
             }
         } else if let Some(array) = column.as_any().downcast_ref::<Float64Array>() {
             if is_categorical == Some(true) {
-                return Err(SceneError::MixedXTypes);
+                return Err(mixed());
             }
             is_categorical = Some(false);
             for i in 0..array.len() {
@@ -715,12 +798,12 @@ fn read_x(batches: &[RecordBatch], index: usize) -> Result<XData, SceneError> {
             }
         } else if let Some(values) = to_f64(column) {
             if is_categorical == Some(true) {
-                return Err(SceneError::MixedXTypes);
+                return Err(mixed());
             }
             is_categorical = Some(false);
             numeric.extend(values);
         } else {
-            return Err(SceneError::UndrawableXType);
+            return Err(undrawable());
         }
     }
 
@@ -729,16 +812,6 @@ fn read_x(batches: &[RecordBatch], index: usize) -> Result<XData, SceneError> {
         Some(false) => Ok(XData::Numeric(numeric)),
         None => Ok(XData::Categorical(Vec::new())),
     }
-}
-
-fn read_numeric(batches: &[RecordBatch], index: usize) -> Result<Vec<Option<f64>>, SceneError> {
-    let mut values = Vec::new();
-    for batch in batches {
-        let column = batch.column(index);
-        let mut numbers = to_f64(column).ok_or(SceneError::UndrawableYType)?;
-        values.append(&mut numbers);
-    }
-    Ok(values)
 }
 
 /// Reads a column as categorical labels, one per row: text as-is, numbers formatted as text.
@@ -860,12 +933,18 @@ pub enum SceneError {
     /// A bar chart needs categorical x values.
     #[error("a bar chart needs categorical x values, but the x shelf is numeric")]
     CategoricalXExpected,
+    /// A bar chart with categorical x values also needs numeric y values.
+    #[error("a bar chart with a categorical x axis needs numeric y values")]
+    NumericYExpected,
     /// A line, area or scatter chart needs numeric x values.
     #[error("this mark needs numeric x values, but the x shelf is categorical")]
     NumericXExpected,
     /// The x column mixes types across batches.
     #[error("the x column mixes text and numeric values")]
     MixedXTypes,
+    /// The y column mixes types across batches.
+    #[error("the y column mixes text and numeric values")]
+    MixedYTypes,
     /// The x column's type cannot be drawn.
     #[error("the x column has a type the scene builder cannot draw")]
     UndrawableXType,
@@ -1262,5 +1341,48 @@ mod tests {
         assert!(slice.center.x + slice.radius <= scene.plot.x + scene.plot.width + 0.01);
         assert!(slice.center.y - slice.radius >= scene.plot.y - 0.01);
         assert!(slice.center.y + slice.radius <= scene.plot.y + scene.plot.height + 0.01);
+    }
+
+    #[test]
+    fn a_horizontal_bar_scene_puts_categories_on_the_y_axis() {
+        // Categories on y and values on x: the "top ten products as a horizontal bar" shape.
+        let schema = Schema::new(vec![
+            Field::new("x", DataType::Float64, true),
+            Field::new("y", DataType::Utf8, true),
+        ]);
+        let x = Float64Array::from(vec![10.0, 30.0, 20.0]);
+        let mut y = StringBuilder::new();
+        for category in ["Low", "High", "Mid"] {
+            y.append_value(category);
+        }
+        let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(x), Arc::new(y.finish())])
+            .expect("batch");
+
+        let columns = vec![column(ChannelKind::X, "x"), column(ChannelKind::Y, "y")];
+        let scene = build(&spec(Mark::Bar, &columns, &[batch])).expect("builds");
+
+        assert!(!scene.x_axis.categorical, "the value axis is numeric");
+        assert!(scene.y_axis.categorical, "the category axis is on y");
+        assert_eq!(scene.y_axis.ticks.len(), 3);
+
+        let SeriesKind::Bars(bars) = &scene.series[0].kind else {
+            panic!("expected bars");
+        };
+        assert_eq!(bars.len(), 3);
+
+        // The bar for 30 is three times as wide as the bar for 10.
+        let mut widths: Vec<f32> = bars.iter().map(|bar| bar.width).collect();
+        widths.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
+        assert!(
+            (widths[2] - widths[0] * 3.0).abs() < 1.0,
+            "bar widths should be proportional: {widths:?}"
+        );
+
+        for bar in bars {
+            assert!(bar.x >= scene.plot.x - 0.01);
+            assert!(bar.x + bar.width <= scene.plot.x + scene.plot.width + 0.01);
+            assert!(bar.y >= scene.plot.y - 0.01);
+            assert!(bar.y + bar.height <= scene.plot.y + scene.plot.height + 0.01);
+        }
     }
 }
