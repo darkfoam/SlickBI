@@ -36,7 +36,10 @@ const PALETTE: [[f32; 4]; 8] = [
 ];
 
 /// The vertical space reserved above the plot for a legend, in points.
-const LEGEND_HEIGHT: f32 = 24.0;
+pub const LEGEND_HEIGHT: f32 = 24.0;
+
+/// The vertical space reserved for an axis title, in points.
+pub const TITLE_SPACE: f32 = 16.0;
 
 /// Margins, in points, reserved around the plot area for axes.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -186,6 +189,10 @@ pub struct Scene {
     pub series: Vec<Series>,
     /// Legend entries, when the chart splits into several series. Empty for a single series.
     pub legend: Vec<LegendEntry>,
+    /// The horizontal axis title, when the chart shows axes.
+    pub x_title: Option<String>,
+    /// The vertical axis title, when the chart shows axes.
+    pub y_title: Option<String>,
 }
 
 /// Everything needed to build a scene.
@@ -251,22 +258,38 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
     let show_axes = spec.options.show_axes && !pie;
     let show_legend = spec.options.show_legend && (has_color || pie);
 
-    // A pie has no axes; a chart with its axes hidden gets uniform, tighter margins.
-    let margins = if !show_axes {
+    let x_title = if show_axes {
+        column_title(spec.columns, ChannelKind::X)
+    } else {
+        None
+    };
+    let y_title = if show_axes {
+        column_title(spec.columns, ChannelKind::Y)
+    } else {
+        None
+    };
+
+    // A pie has no axes; a chart with its axes hidden gets uniform, tighter margins. Axis titles
+    // and the legend each reserve a line in the surrounding margins.
+    let mut margins = if show_axes {
+        spec.margins
+    } else {
         Margins {
             left: 16.0,
             right: 16.0,
             bottom: 16.0,
-            top: spec.margins.top.max(16.0) + if show_legend { LEGEND_HEIGHT } else { 0.0 },
+            top: spec.margins.top.max(16.0),
         }
-    } else if show_legend {
-        Margins {
-            top: spec.margins.top + LEGEND_HEIGHT,
-            ..spec.margins
-        }
-    } else {
-        spec.margins
     };
+    if y_title.is_some() {
+        margins.top += TITLE_SPACE;
+    }
+    if show_legend {
+        margins.top += LEGEND_HEIGHT;
+    }
+    if x_title.is_some() {
+        margins.bottom += TITLE_SPACE;
+    }
     let plot = plot_rect(spec.size, margins);
 
     let x = read_axis(spec.batches, x_index, false)?;
@@ -310,6 +333,9 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
             .collect();
     }
 
+    scene.x_title = x_title;
+    scene.y_title = y_title;
+
     Ok(scene)
 }
 
@@ -328,6 +354,15 @@ fn column_format(columns: &[OutputColumn], kind: ChannelKind) -> Option<&FieldFo
         .iter()
         .find(|column| column.kind == kind)
         .and_then(|column| column.format.as_ref())
+}
+
+/// The display title of the column from a given shelf, if it has one.
+fn column_title(columns: &[OutputColumn], kind: ChannelKind) -> Option<String> {
+    columns
+        .iter()
+        .find(|column| column.kind == kind)
+        .map(|column| column.title.clone())
+        .filter(|title| !title.is_empty())
 }
 
 /// The x values, either categorical or numeric.
@@ -457,6 +492,8 @@ fn bar_scene(
         y_axis,
         series,
         legend: Vec::new(),
+        x_title: None,
+        y_title: None,
     })
 }
 
@@ -529,6 +566,8 @@ fn line_scene(
         y_axis,
         series,
         legend: Vec::new(),
+        x_title: None,
+        y_title: None,
     })
 }
 
@@ -584,6 +623,8 @@ fn point_scene(
         y_axis: numeric_axis(&y_scale, plot, column_format(spec.columns, ChannelKind::Y)),
         series,
         legend: Vec::new(),
+        x_title: None,
+        y_title: None,
     })
 }
 
@@ -657,6 +698,8 @@ fn arc_scene(
         },
         series,
         legend: Vec::new(),
+        x_title: None,
+        y_title: None,
     })
 }
 
@@ -1089,6 +1132,7 @@ mod tests {
             kind,
             name: name.to_owned(),
             field: FieldId::new(name),
+            title: name.to_owned(),
             data_type: SpecType::Text,
             format: None,
             aggregate: false,
@@ -1596,5 +1640,29 @@ mod tests {
         };
         assert!(slice.inner_radius > 0.0, "a donut has a hole");
         assert!(slice.inner_radius < slice.radius);
+    }
+
+    #[test]
+    fn axes_carry_titles_from_the_field_names() {
+        let columns = vec![
+            column(ChannelKind::X, "region"),
+            column(ChannelKind::Y, "amount"),
+        ];
+        let batch = batch_categorical_y(&["A"], &[1.0]);
+        let scene = build(&spec(Mark::Bar, &columns, &[batch])).expect("builds");
+        assert_eq!(scene.x_title.as_deref(), Some("region"));
+        assert_eq!(scene.y_title.as_deref(), Some("amount"));
+    }
+
+    #[test]
+    fn a_pie_has_no_axis_titles() {
+        let columns = vec![
+            column(ChannelKind::X, "region"),
+            column(ChannelKind::Y, "amount"),
+        ];
+        let batch = batch_categorical_y(&["A"], &[1.0]);
+        let scene = build(&spec(Mark::Arc, &columns, &[batch])).expect("builds");
+        assert!(scene.x_title.is_none());
+        assert!(scene.y_title.is_none());
     }
 }

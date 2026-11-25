@@ -9,7 +9,7 @@ use eframe::egui;
 use slickbi_app::{Session, Shelf};
 use slickbi_connectors::DatabaseKind;
 use slickbi_engine::SourceFormat;
-use slickbi_scene::{Bar, Scene, SeriesKind};
+use slickbi_scene::{Bar, LEGEND_HEIGHT, Scene, SeriesKind, TITLE_SPACE};
 use slickbi_spec::{Agg, Channel, FieldId, FilterOp, Mark, Role, Scalar};
 
 fn main() -> eframe::Result {
@@ -1962,10 +1962,11 @@ fn draw_scene_in(ui: &mut egui::Ui, scene: &Scene, rect: egui::Rect) {
     }
 
     let font = egui::FontId::proportional(11.0);
+    let label_colour = egui::Color32::from_rgb(0x3D, 0x47, 0x54);
     // Legend across the top, when the chart splits by colour.
     if !scene.legend.is_empty() {
         let mut x = rect.min.x + scene.plot.x;
-        let center_y = rect.min.y + scene.plot.y / 2.0;
+        let center_y = rect.min.y + scene.plot.y - LEGEND_HEIGHT / 2.0;
         for entry in &scene.legend {
             let color = to_color(entry.color);
             let swatch =
@@ -1976,10 +1977,39 @@ fn draw_scene_in(ui: &mut egui::Ui, scene: &Scene, rect: egui::Rect) {
                 egui::Align2::LEFT_CENTER,
                 &entry.label,
                 font.clone(),
-                egui::Color32::from_rgb(0x3D, 0x47, 0x54),
+                label_colour,
             );
             x = text_rect.right() + 16.0;
         }
+    }
+    if let Some(title) = &scene.y_title {
+        let legend = if scene.legend.is_empty() {
+            0.0
+        } else {
+            LEGEND_HEIGHT
+        };
+        painter.text(
+            egui::pos2(
+                rect.min.x + scene.plot.x,
+                rect.min.y + scene.plot.y - legend - TITLE_SPACE / 2.0,
+            ),
+            egui::Align2::LEFT_CENTER,
+            title,
+            font.clone(),
+            label_colour,
+        );
+    }
+    if let Some(title) = &scene.x_title {
+        painter.text(
+            egui::pos2(
+                rect.min.x + scene.plot.x + scene.plot.width / 2.0,
+                rect.min.y + scene.plot.y + scene.plot.height + 20.0,
+            ),
+            egui::Align2::CENTER_TOP,
+            title,
+            font.clone(),
+            label_colour,
+        );
     }
     if has_axes {
         for tick in &scene.y_axis.ticks {

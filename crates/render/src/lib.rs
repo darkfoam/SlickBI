@@ -9,7 +9,7 @@
 //! and [`encode_png`] turns that into the bytes of a PNG file.
 
 use ab_glyph::{Font, FontArc, Glyph, OutlinedGlyph, PxScale};
-use slickbi_scene::{ArcSlice, Bar, Scene, SeriesKind, Tick};
+use slickbi_scene::{ArcSlice, Bar, LEGEND_HEIGHT, Scene, SeriesKind, TITLE_SPACE, Tick};
 use thiserror::Error;
 use tiny_skia::{
     BlendMode, Color, FilterQuality, IntSize, Paint, PathBuilder, Pixmap, PixmapPaint, Rect,
@@ -62,6 +62,7 @@ fn rasterize_with(scene: &Scene, scale: f32, watermark: bool) -> Pixmap {
     canvas.draw_axes(scene);
     canvas.draw_series(scene);
     canvas.draw_legend(scene);
+    canvas.draw_titles(scene);
     if watermark {
         canvas.draw_watermark();
     }
@@ -207,7 +208,7 @@ pub fn render_svg(scene: &Scene) -> String {
 
     if !scene.legend.is_empty() {
         let mut x = plot.x;
-        let center_y = plot.y / 2.0;
+        let center_y = plot.y - LEGEND_HEIGHT / 2.0;
         for entry in &scene.legend {
             let _ = write!(
                 out,
@@ -224,6 +225,30 @@ pub fn render_svg(scene: &Scene) -> String {
             // A fixed advance keeps SVG layout independent of the reader's font metrics.
             x += entry.label.chars().count() as f32 * 6.2 + 14.0;
         }
+    }
+
+    if let Some(title) = &scene.y_title {
+        let legend = if scene.legend.is_empty() {
+            0.0
+        } else {
+            LEGEND_HEIGHT
+        };
+        let _ = write!(
+            out,
+            r#"<text x="{:.2}" y="{:.2}" font-family="{FONT}" font-size="11" fill="{AXIS_TEXT}" dominant-baseline="middle">{}</text>"#,
+            plot.x,
+            plot.y - legend - TITLE_SPACE / 2.0,
+            escape_xml(title)
+        );
+    }
+    if let Some(title) = &scene.x_title {
+        let _ = write!(
+            out,
+            r#"<text x="{:.2}" y="{:.2}" font-family="{FONT}" font-size="11" fill="{AXIS_TEXT}" text-anchor="middle">{}</text>"#,
+            plot.x + plot.width / 2.0,
+            plot.y + plot.height + 20.0,
+            escape_xml(title)
+        );
     }
 
     if has_axes {
@@ -525,7 +550,7 @@ impl Canvas {
         let scale = self.scale;
         let swatch = 10.0 * scale;
         let mut x = scene.plot.x * scale;
-        let center_y = (scene.plot.y * scale) / 2.0;
+        let center_y = (scene.plot.y - LEGEND_HEIGHT / 2.0) * scale;
         for entry in &scene.legend {
             if let Some(rect) = Rect::from_xywh(x, center_y - swatch / 2.0, swatch, swatch) {
                 self.pixmap
@@ -541,6 +566,38 @@ impl Canvas {
                 Anchor::Left,
             );
             x += width + 14.0 * scale;
+        }
+    }
+
+    /// Draws the axis titles: the y title above the plot and the x title below it.
+    fn draw_titles(&mut self, scene: &Scene) {
+        let plot = scene.plot;
+        if let Some(title) = &scene.y_title {
+            let legend = if scene.legend.is_empty() {
+                0.0
+            } else {
+                LEGEND_HEIGHT
+            };
+            let center_y = (plot.y - legend - TITLE_SPACE / 2.0) * self.scale;
+            self.text(
+                title,
+                LABEL_SIZE,
+                plot.x * self.scale,
+                center_y - LABEL_SIZE * self.scale / 2.0,
+                &TEXT,
+                Anchor::Left,
+            );
+        }
+        if let Some(title) = &scene.x_title {
+            let y = (plot.y + plot.height + 20.0) * self.scale;
+            self.text(
+                title,
+                LABEL_SIZE,
+                (plot.x + plot.width / 2.0) * self.scale,
+                y,
+                &TEXT,
+                Anchor::Center,
+            );
         }
     }
 
@@ -776,6 +833,7 @@ mod tests {
             kind,
             name: name.to_owned(),
             field: FieldId::new(name),
+            title: name.to_owned(),
             data_type: SpecType::Text,
             format: None,
             aggregate: false,

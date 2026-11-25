@@ -67,6 +67,8 @@ pub struct OutputColumn {
     pub name: String,
     /// The field the column reads.
     pub field: FieldId,
+    /// The field's display name, for an axis title.
+    pub title: String,
     /// The type of the value.
     pub data_type: DataType,
     /// How the value should be displayed, when the field declares a format.
@@ -148,6 +150,7 @@ pub fn plan(
             alias: alias.clone(),
             expression,
             field: field.id.clone(),
+            title: field.name().to_owned(),
             agg: channel.agg,
             data_type,
             format: field.format.clone(),
@@ -263,6 +266,7 @@ pub fn plan(
                 kind: item.kind,
                 name: item.alias,
                 field: item.field,
+                title: item.title,
                 data_type: item.data_type,
                 format: item.format,
                 aggregate: item.aggregate,
@@ -475,6 +479,7 @@ struct SelectItem {
     alias: String,
     expression: String,
     field: FieldId,
+    title: String,
     agg: Agg,
     data_type: DataType,
     format: Option<FieldFormat>,
