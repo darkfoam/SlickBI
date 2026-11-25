@@ -254,6 +254,7 @@ impl SlickBiApp {
                 (Mark::Line, "Line"),
                 (Mark::Area, "Area"),
                 (Mark::Point, "Point"),
+                (Mark::Arc, "Pie"),
             ] {
                 let selected = self
                     .session
@@ -1476,20 +1477,23 @@ fn draw_scene_in(ui: &mut egui::Ui, scene: &Scene, rect: egui::Rect) {
         rect.min + egui::vec2(scene.plot.x, scene.plot.y),
         egui::vec2(scene.plot.width, scene.plot.height),
     );
-    let axis = egui::Color32::from_rgb(0xB8, 0xC0, 0xC9);
-    for tick in &scene.y_axis.ticks {
-        let y = rect.min.y + tick.position;
-        painter.line_segment(
-            [egui::pos2(plot.min.x, y), egui::pos2(plot.max.x, y)],
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(0xED, 0xF0, 0xF4)),
+    let has_axes = !scene.x_axis.ticks.is_empty() || !scene.y_axis.ticks.is_empty();
+    if has_axes {
+        let axis = egui::Color32::from_rgb(0xB8, 0xC0, 0xC9);
+        for tick in &scene.y_axis.ticks {
+            let y = rect.min.y + tick.position;
+            painter.line_segment(
+                [egui::pos2(plot.min.x, y), egui::pos2(plot.max.x, y)],
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(0xED, 0xF0, 0xF4)),
+            );
+        }
+        painter.rect_stroke(
+            plot,
+            0.0,
+            egui::Stroke::new(1.0, axis),
+            egui::StrokeKind::Inside,
         );
     }
-    painter.rect_stroke(
-        plot,
-        0.0,
-        egui::Stroke::new(1.0, axis),
-        egui::StrokeKind::Inside,
-    );
 
     for series in &scene.series {
         let color = to_color(series.color);
@@ -1510,6 +1514,7 @@ fn draw_scene_in(ui: &mut egui::Ui, scene: &Scene, rect: egui::Rect) {
                     painter.circle_filled(center, 2.5, color);
                 }
             }
+            SeriesKind::Arc(slice) => paint_arc(&painter, rect.min, slice, color),
         }
     }
 
@@ -1533,23 +1538,25 @@ fn draw_scene_in(ui: &mut egui::Ui, scene: &Scene, rect: egui::Rect) {
             x = text_rect.right() + 16.0;
         }
     }
-    for tick in &scene.y_axis.ticks {
-        painter.text(
-            egui::pos2(plot.min.x - 6.0, rect.min.y + tick.position),
-            egui::Align2::RIGHT_CENTER,
-            &tick.text,
-            font.clone(),
-            egui::Color32::from_rgb(0x3D, 0x47, 0x54),
-        );
-    }
-    for tick in &scene.x_axis.ticks {
-        painter.text(
-            egui::pos2(rect.min.x + tick.position, plot.max.y + 6.0),
-            egui::Align2::CENTER_TOP,
-            &tick.text,
-            font.clone(),
-            egui::Color32::from_rgb(0x3D, 0x47, 0x54),
-        );
+    if has_axes {
+        for tick in &scene.y_axis.ticks {
+            painter.text(
+                egui::pos2(plot.min.x - 6.0, rect.min.y + tick.position),
+                egui::Align2::RIGHT_CENTER,
+                &tick.text,
+                font.clone(),
+                egui::Color32::from_rgb(0x3D, 0x47, 0x54),
+            );
+        }
+        for tick in &scene.x_axis.ticks {
+            painter.text(
+                egui::pos2(rect.min.x + tick.position, plot.max.y + 6.0),
+                egui::Align2::CENTER_TOP,
+                &tick.text,
+                font.clone(),
+                egui::Color32::from_rgb(0x3D, 0x47, 0x54),
+            );
+        }
     }
 }
 
@@ -1599,6 +1606,33 @@ fn paint_area(
         fill,
         egui::Stroke::NONE,
     ));
+}
+
+/// Fills a pie wedge as a triangle fan, which handles slices wider than a half turn.
+fn paint_arc(
+    painter: &egui::Painter,
+    origin: egui::Pos2,
+    slice: &slickbi_scene::ArcSlice,
+    color: egui::Color32,
+) {
+    let sweep = slice.end - slice.start;
+    let steps = ((sweep.abs() / std::f32::consts::TAU) * 90.0)
+        .ceil()
+        .max(2.0) as usize;
+    let center = origin + egui::vec2(slice.center.x, slice.center.y);
+
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(center, color);
+    for step in 0..=steps {
+        let angle = slice.start + sweep * (step as f32 / steps as f32);
+        let x = slice.center.x + slice.radius * angle.sin();
+        let y = slice.center.y - slice.radius * angle.cos();
+        mesh.colored_vertex(origin + egui::vec2(x, y), color);
+    }
+    for step in 0..steps {
+        mesh.add_triangle(0, (step + 1) as u32, (step + 2) as u32);
+    }
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 fn to_color(color: [f32; 4]) -> egui::Color32 {

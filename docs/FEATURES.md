@@ -80,7 +80,7 @@ that needs different data is a forked worksheet.
 | V06 | Axis, legend and tooltip configuration | F | 0.0.2 | planned |
 | V07 | Chart-level sort and row limit | F | 0.0.2 | done |
 | V08 | Heatmaps | F | 0.0.3 | planned |
-| V09 | Pie and donut charts | F | 0.0.3 | planned |
+| V09 | Pie and donut charts | F | 0.0.3 | in progress |
 | V10 | KPI and text tiles | F | 0.0.3 | planned |
 | V11 | Colourblind-safe palettes by default | F | 0.0.3 | planned |
 | V12 | Automatic chart suggestion from the current shelves | F | 0.0.3 | planned |

@@ -980,6 +980,20 @@ mod tests {
     }
 
     #[test]
+    fn a_pie_mark_builds_arc_series() {
+        let (mut session, path) = loaded();
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+        session.set_mark(Mark::Arc);
+        let scene = session.scene().expect("scene");
+        assert!(!scene.series.is_empty());
+        for series in &scene.series {
+            assert!(matches!(&series.kind, slickbi_scene::SeriesKind::Arc(_)));
+        }
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
     fn a_color_shelf_splits_bars_into_series() {
         let path = temp("color.csv");
         std::fs::write(

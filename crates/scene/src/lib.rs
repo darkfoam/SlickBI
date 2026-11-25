@@ -94,6 +94,22 @@ pub struct Bar {
     pub height: f32,
 }
 
+/// One wedge of a pie chart, in points and radians.
+///
+/// Angles are measured clockwise from twelve o'clock: at `0` the point is directly above the
+/// centre, at `π/2` directly to its right.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ArcSlice {
+    /// The centre of the pie.
+    pub center: Point,
+    /// The outer radius.
+    pub radius: f32,
+    /// The start angle, in radians.
+    pub start: f32,
+    /// The end angle, in radians. Greater than `start`.
+    pub end: f32,
+}
+
 /// A tick on an axis: a position along the axis and its label.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tick {
@@ -113,8 +129,7 @@ pub struct Axis {
     pub categorical: bool,
 }
 
-/// One plotted series. A single series for now; colour and multiple series arrive with the
-/// colour shelf.
+/// One plotted series: a set of marks sharing a colour and a legend label.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Series {
     /// The label shown in a legend.
@@ -136,6 +151,8 @@ pub enum SeriesKind {
     Area(Vec<Point>),
     /// One point per value.
     Points(Vec<Point>),
+    /// One wedge of a pie chart.
+    Arc(ArcSlice),
 }
 
 /// One entry in a legend: the swatch colour and the series it names.
@@ -203,8 +220,19 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
         .iter()
         .position(|column| column.kind == ChannelKind::Color);
 
-    let has_color = color_index.is_some();
-    let margins = if has_color {
+    // A pie colours by category and ignores the colour shelf, but still needs legend space.
+    let pie = matches!(spec.mark, Mark::Arc);
+    let has_color = !pie && color_index.is_some();
+    let show_legend = has_color || pie;
+
+    let margins = if pie {
+        Margins {
+            left: 16.0,
+            right: 16.0,
+            bottom: 16.0,
+            top: spec.margins.top.max(16.0) + LEGEND_HEIGHT,
+        }
+    } else if has_color {
         Margins {
             top: spec.margins.top + LEGEND_HEIGHT,
             ..spec.margins
@@ -225,10 +253,11 @@ pub fn build(spec: &SceneSpec<'_>) -> Result<Scene, SceneError> {
         Mark::Line => line_scene(spec, plot, x, y, false, color),
         Mark::Area => line_scene(spec, plot, x, y, true, color),
         Mark::Point => point_scene(spec, plot, x, y, color),
+        Mark::Arc => arc_scene(spec, plot, x, y),
         other => Err(SceneError::UnsupportedMark { mark: other }),
     }?;
 
-    if has_color {
+    if show_legend {
         scene.legend = scene
             .series
             .iter()
@@ -435,6 +464,75 @@ fn point_scene(
             categorical: false,
         },
         y_axis: numeric_axis(&y_scale, plot),
+        series,
+        legend: Vec::new(),
+    })
+}
+
+/// A pie chart: one wedge per category with a positive value, sweeping clockwise from the top.
+///
+/// Categories with a null, zero or negative value are left out, because a pie has no way to show
+/// them. Negative values are common in financial data, so this is a documented choice rather than
+/// an error: the caller sees the remaining slices and no wedge for the excluded category.
+fn arc_scene(
+    spec: &SceneSpec<'_>,
+    plot: Rect,
+    x: XData,
+    y: Vec<Option<f64>>,
+) -> Result<Scene, SceneError> {
+    let categories = x.as_categorical().ok_or(SceneError::CategoricalXExpected)?;
+
+    let center = Point {
+        x: plot.x + plot.width / 2.0,
+        y: plot.y + plot.height / 2.0,
+    };
+    let radius = plot.width.min(plot.height) / 2.0 * 0.95;
+
+    let total: f64 = y
+        .iter()
+        .flatten()
+        .filter(|value| value.is_finite() && **value > 0.0)
+        .sum();
+
+    let mut series = Vec::new();
+    let mut angle = 0.0f32;
+    if total > 0.0 {
+        for (index, category) in categories.iter().enumerate() {
+            let Some(value) = y.get(index).copied().flatten() else {
+                continue;
+            };
+            if !value.is_finite() || value <= 0.0 {
+                continue;
+            }
+            let span = (value / total * std::f64::consts::TAU) as f32;
+            let start = angle;
+            angle += span;
+            series.push(Series {
+                label: category.clone().unwrap_or_default(),
+                color: PALETTE[series.len() % PALETTE.len()],
+                kind: SeriesKind::Arc(ArcSlice {
+                    center,
+                    radius,
+                    start,
+                    end: angle,
+                }),
+            });
+        }
+    }
+
+    Ok(Scene {
+        width: spec.size.0,
+        height: spec.size.1,
+        plot,
+        // A pie has no axes: the categories are named in the legend.
+        x_axis: Axis {
+            ticks: Vec::new(),
+            categorical: true,
+        },
+        y_axis: Axis {
+            ticks: Vec::new(),
+            categorical: false,
+        },
         series,
         legend: Vec::new(),
     })
@@ -1114,5 +1212,55 @@ mod tests {
                 assert!(window[0].x <= window[1].x);
             }
         }
+    }
+
+    #[test]
+    fn a_pie_chart_has_one_slice_per_positive_value() {
+        let columns = vec![column(ChannelKind::X, "x"), column(ChannelKind::Y, "y")];
+        let batch = batch_categorical_y(&["A", "B", "C"], &[1.0, 2.0, 1.0]);
+        let scene = build(&spec(Mark::Arc, &columns, &[batch])).expect("builds");
+
+        assert_eq!(scene.series.len(), 3);
+        assert_eq!(scene.legend.len(), 3);
+        assert!(scene.x_axis.ticks.is_empty() && scene.y_axis.ticks.is_empty());
+
+        let mut total = 0.0;
+        let mut angles = Vec::new();
+        for series in &scene.series {
+            let SeriesKind::Arc(slice) = &series.kind else {
+                panic!("expected an arc");
+            };
+            assert!(slice.radius > 0.0);
+            assert!(slice.end >= slice.start);
+            angles.push(slice.end - slice.start);
+            total += slice.end - slice.start;
+        }
+        assert!((total - std::f32::consts::TAU).abs() < 1e-4);
+        // B carries twice the value of A, so its slice is twice as wide.
+        assert!((angles[1] - angles[0] * 2.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn pie_drops_non_positive_values() {
+        let columns = vec![column(ChannelKind::X, "x"), column(ChannelKind::Y, "y")];
+        let batch = batch_categorical_y(&["A", "B", "C"], &[4.0, -1.0, 0.0]);
+        let scene = build(&spec(Mark::Arc, &columns, &[batch])).expect("builds");
+        assert_eq!(scene.series.len(), 1);
+        assert_eq!(scene.series[0].label, "A");
+    }
+
+    #[test]
+    fn a_pie_slice_stays_inside_the_plot() {
+        let columns = vec![column(ChannelKind::X, "x"), column(ChannelKind::Y, "y")];
+        let batch = batch_categorical_y(&["A", "B"], &[1.0, 1.0]);
+        let scene = build(&spec(Mark::Arc, &columns, &[batch])).expect("builds");
+
+        let SeriesKind::Arc(slice) = &scene.series[0].kind else {
+            panic!("expected an arc");
+        };
+        assert!(slice.center.x - slice.radius >= scene.plot.x - 0.01);
+        assert!(slice.center.x + slice.radius <= scene.plot.x + scene.plot.width + 0.01);
+        assert!(slice.center.y - slice.radius >= scene.plot.y - 0.01);
+        assert!(slice.center.y + slice.radius <= scene.plot.y + scene.plot.height + 0.01);
     }
 }
