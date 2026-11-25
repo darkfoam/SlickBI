@@ -88,10 +88,7 @@ fn a_read_only_postgres_table_reaches_the_first_chart_within_two_seconds() {
         .unwrap_or_else(|| panic!("first chart: {:?}", session.error()));
     assert_eq!(scene.series.len(), 1);
     assert!(
-        matches!(
-            scene.series[0].kind,
-            slickbi_scene::SeriesKind::Bars(_)
-        ),
+        matches!(scene.series[0].kind, slickbi_scene::SeriesKind::Bars(_)),
         "a region by amount chart is bars"
     );
 
