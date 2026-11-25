@@ -300,7 +300,7 @@ fn split_location(location: &str, default_port: u16) -> (String, u16, String) {
     }
 }
 
-fn quote_ident(name: &str) -> String {
+pub(crate) fn quote_ident(name: &str) -> String {
     let mut quoted = String::with_capacity(name.len() + 2);
     quoted.push('"');
     for character in name.chars() {
@@ -313,17 +313,17 @@ fn quote_ident(name: &str) -> String {
     quoted
 }
 
-fn quote_ident_mysql(name: &str) -> String {
+pub(crate) fn quote_ident_mysql(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
 }
 
-fn database_error(error: impl std::fmt::Display) -> ConnectorError {
+pub(crate) fn database_error(error: impl std::fmt::Display) -> ConnectorError {
     ConnectorError::Database(error.to_string())
 }
 
 // ---- SQLite ----
 
-fn sqlite_read(source: &DatabaseSource) -> Result<rusqlite::Connection, ConnectorError> {
+pub(crate) fn sqlite_read(source: &DatabaseSource) -> Result<rusqlite::Connection, ConnectorError> {
     rusqlite::Connection::open(&source.location).map_err(database_error)
 }
 
@@ -396,7 +396,9 @@ fn read_sqlite(source: &DatabaseSource) -> Result<RawTable, ConnectorError> {
 
 // ---- PostgreSQL ----
 
-fn postgres_connect(source: &DatabaseSource) -> Result<(postgres::Client, String), ConnectorError> {
+pub(crate) fn postgres_connect(
+    source: &DatabaseSource,
+) -> Result<(postgres::Client, String), ConnectorError> {
     let (host, port, database) = split_location(&source.location, 5432);
     let mut config = postgres::Config::new();
     config.host(&host).port(port).dbname(&database);
@@ -472,7 +474,7 @@ fn read_postgres(source: &DatabaseSource) -> Result<RawTable, ConnectorError> {
 
 // ---- MySQL / MariaDB ----
 
-fn mysql_connect(source: &DatabaseSource) -> Result<mysql::Conn, ConnectorError> {
+pub(crate) fn mysql_connect(source: &DatabaseSource) -> Result<mysql::Conn, ConnectorError> {
     let (host, port, database) = split_location(&source.location, 3306);
     let mut builder = mysql::OptsBuilder::new()
         .ip_or_hostname(Some(host))

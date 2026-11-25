@@ -1,8 +1,24 @@
 # ADR 0002 — Live queries against database sources
 
-- **Status:** proposed
+- **Status:** accepted (first implementation shipped; the wider dialect surface remains)
 - **Date:** 2026-11-25
 - **Deciders:** nclack
+
+## Implementation note (2026-11-25)
+
+The first slice ships the **narrow path**: the planner's DuckDB-shaped statement runs as written
+on SQLite and PostgreSQL, and on MySQL with `ANSI_QUOTES`; every output is cast to text in a
+wrapping query and parsed back into the planner's Arrow type, and PostgreSQL placeholders are
+renumbered. This covers dimensions, sums/averages/min/max/count, comparisons, `in`/`between`,
+sorts, limits and parameter bindings.
+
+Constructs that would need the full dialect layer are **refused by type**, not approximated: a
+calculated field, a type override, a median on SQLite/MySQL, a standard deviation on SQLite, a
+text-pattern filter, and a date filter on SQLite. The connection dialog lets a user choose live
+or snapshot; the import is kept either way so a save still writes an extract.
+
+Still to do for the wider surface: dialect-aware calculation/aggregate/type rendering, string
+pattern filters, SQLite date comparisons, pushdown, and a parity harness per dialect.
 
 ## Context
 

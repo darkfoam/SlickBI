@@ -61,11 +61,21 @@ const MIN_ELEMENT_WIDTH: f64 = 80.0;
 /// The smallest height a report element can be resized to, in points.
 const MIN_ELEMENT_HEIGHT: f64 = 60.0;
 
+/// A database connection kept open for live worksheet queries this session.
+///
+/// The rows are still imported for the extract a save writes and for reopening offline; worksheet
+/// queries go to the source while this is present.
+struct LiveConnection {
+    source: slickbi_connectors::DatabaseSource,
+    model: DataModelId,
+}
+
 /// The application state.
 pub struct Session {
     engine: Engine,
     workbook: Workbook,
     source: Option<(PathBuf, SourceFormat)>,
+    live: Option<LiveConnection>,
     active: usize,
     active_report: usize,
     scene: Option<Scene>,
@@ -90,6 +100,7 @@ impl Session {
                 slickbi_spec::WorkbookMeta::new("Untitled"),
             ),
             source: None,
+            live: None,
             active: 0,
             active_report: 0,
             scene: None,
@@ -117,6 +128,11 @@ impl Session {
     /// Whether a data source has been loaded.
     pub fn has_source(&self) -> bool {
         !self.workbook.models.is_empty()
+    }
+
+    /// Whether the active source is queried live against a database.
+    pub fn is_live(&self) -> bool {
+        self.live.is_some()
     }
 
     /// The number of worksheets.
@@ -196,6 +212,7 @@ impl Session {
         self.workbook.worksheets.push(worksheet);
         self.active = self.workbook.worksheets.len() - 1;
         self.source = Some((path.to_owned(), format));
+        self.live = None;
         self.refresh();
         Ok(())
     }
@@ -271,6 +288,7 @@ impl Session {
         self.workbook.worksheets.push(worksheet);
         self.active = self.workbook.worksheets.len() - 1;
         self.source = None;
+        self.live = None;
         self.refresh();
         Ok(())
     }
@@ -291,6 +309,31 @@ impl Session {
         password: Option<&str>,
         table: &str,
     ) -> Result<(), SessionError> {
+        self.connect_database_mode(kind, location, user, password, table, true)
+    }
+
+    /// Connects to a database table, choosing whether worksheet queries go to the source.
+    ///
+    /// `live` runs each worksheet query on the source through its driver. A worksheet a source
+    /// cannot execute (a calculation, a type override, an operator the source lacks) is refused
+    /// with a reason. `live = false` queries the imported copy, which is a snapshot.
+    ///
+    /// The rows are imported either way, so a save still writes a Parquet extract and a workbook
+    /// reopens offline.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Connector`] when the database cannot be reached or read, or
+    /// [`SessionError::Engine`] when the imported rows cannot be registered.
+    pub fn connect_database_mode(
+        &mut self,
+        kind: slickbi_connectors::DatabaseKind,
+        location: &str,
+        user: Option<&str>,
+        password: Option<&str>,
+        table: &str,
+        live: bool,
+    ) -> Result<(), SessionError> {
         let source = database_source(kind, location, user, password, table);
         let imported = slickbi_connectors::read_database(&source)?;
         self.engine.register_rows(
@@ -306,7 +349,14 @@ impl Session {
             kind: kind.connection_kind(),
             location: location.to_owned(),
             read_only: true,
-            options: [("table".to_owned(), table.to_owned())].into(),
+            options: [
+                ("table".to_owned(), table.to_owned()),
+                (
+                    "mode".to_owned(),
+                    if live { "live" } else { "snapshot" }.to_owned(),
+                ),
+            ]
+            .into(),
         });
 
         let worksheet = new_worksheet(
@@ -317,6 +367,10 @@ impl Session {
         self.workbook.worksheets.push(worksheet);
         self.active = self.workbook.worksheets.len() - 1;
         self.source = None;
+        self.live = live.then_some(LiveConnection {
+            source,
+            model: DataModelId::new("m1"),
+        });
         self.refresh();
         Ok(())
     }
@@ -1463,13 +1517,50 @@ impl Session {
             .iter()
             .find(|m| m.id == worksheet.model)
             .ok_or_else(|| "the worksheet's model is missing".to_owned())?;
-        let model =
-            Model::resolve_with(document, &self.workbook.parameters).map_err(|e| e.to_string())?;
+        let model = match self
+            .live
+            .as_ref()
+            .filter(|live| live.model == worksheet.model)
+        {
+            Some(live) => {
+                // A live source's table is named after the database table; the imported copy is
+                // always registered as `data`. Rename only the table the SQL sees, for this plan.
+                let mut live_document = document.clone();
+                if let Some(table) = live_document
+                    .tables
+                    .iter_mut()
+                    .find(|table| table.name == slickbi_connectors::TABLE_NAME)
+                {
+                    table.name = live.source.table.clone();
+                }
+                Model::resolve_with(&live_document, &self.workbook.parameters)
+            }
+            None => Model::resolve_with(document, &self.workbook.parameters),
+        }
+        .map_err(|e| e.to_string())?;
         let query = plan(&model, &worksheet, &self.plan_options()).map_err(|e| e.to_string())?;
-        let result = self
-            .engine
-            .execute(&query.sql, &query.params)
-            .map_err(|e| e.to_string())?;
+        let result = match self
+            .live
+            .as_ref()
+            .filter(|live| live.model == worksheet.model)
+        {
+            Some(live) => {
+                if let Some(refusal) = live_refusal(document, &worksheet, live.source.kind) {
+                    return Err(refusal.to_string());
+                }
+                let columns: Vec<(String, DataType)> = query
+                    .columns
+                    .iter()
+                    .map(|column| (column.name.clone(), column.data_type))
+                    .collect();
+                slickbi_connectors::query_live(&live.source, &query.sql, &query.params, &columns)
+                    .map_err(|error| error.to_string())?
+            }
+            None => self
+                .engine
+                .execute(&query.sql, &query.params)
+                .map_err(|e| e.to_string())?,
+        };
 
         let spec = SceneSpec {
             mark: worksheet.mark,
@@ -1539,6 +1630,7 @@ impl Session {
         self.workbook = scz.into_workbook();
         self.active = 0;
         self.source = None;
+        self.live = None;
         self.refresh();
         Ok(())
     }
@@ -1692,6 +1784,104 @@ fn rewrite_field_reference(expression: &str, old: &str, new: &str) -> String {
         }
     }
     out
+}
+
+/// Checks a worksheet against the constructs a live source cannot run safely.
+///
+/// The planner emits DuckDB-shaped SQL. A calculation would carry DuckDB functions, a type
+/// override would carry DuckDB cast names, and a few operators do not exist on every source.
+/// Refusing here, before the query is sent, keeps live mode from returning different numbers.
+fn live_refusal(
+    document: &slickbi_spec::DataModel,
+    worksheet: &Worksheet,
+    kind: slickbi_connectors::DatabaseKind,
+) -> Option<slickbi_connectors::LiveError> {
+    let used = worksheet
+        .encoding
+        .channels()
+        .map(|channel| &channel.field)
+        .chain(worksheet.filters.iter().map(|filter| &filter.field))
+        .chain(worksheet.sort.iter().map(|key| &key.field));
+    for field_id in used {
+        let Some(field) = document.fields.iter().find(|field| &field.id == field_id) else {
+            continue;
+        };
+        match &field.source {
+            FieldSource::Expression { .. } => {
+                return Some(slickbi_connectors::LiveError::CalculatedField(
+                    field.name.clone(),
+                ));
+            }
+            FieldSource::Column { column } => {
+                if field.data_type != DataType::Unknown
+                    && let Some(table) =
+                        document.tables.iter().find(|table| table.id == field.table)
+                    && let Some(column) = table
+                        .columns
+                        .iter()
+                        .find(|candidate| &candidate.id == column)
+                    && field.data_type != column.data_type
+                {
+                    return Some(slickbi_connectors::LiveError::TypeOverride(
+                        field.name.clone(),
+                    ));
+                }
+            }
+        }
+    }
+
+    let source = kind.label();
+    let aggregations = worksheet
+        .encoding
+        .channels()
+        .map(|channel| channel.agg)
+        .chain(worksheet.sort.iter().map(|key| key.agg));
+    for agg in aggregations {
+        let construct = match agg {
+            Agg::Median if kind != slickbi_connectors::DatabaseKind::Postgres => {
+                Some("a median aggregation")
+            }
+            Agg::StdDev | Agg::Variance if kind == slickbi_connectors::DatabaseKind::Sqlite => {
+                Some("a standard-deviation aggregation")
+            }
+            _ => None,
+        };
+        if let Some(construct) = construct {
+            return Some(slickbi_connectors::LiveError::Unsupported {
+                kind: source,
+                construct,
+            });
+        }
+    }
+
+    for filter in &worksheet.filters {
+        if matches!(
+            filter.op,
+            FilterOp::Contains | FilterOp::StartsWith | FilterOp::EndsWith
+        ) {
+            return Some(slickbi_connectors::LiveError::Unsupported {
+                kind: source,
+                construct: "a text-pattern filter",
+            });
+        }
+        // SQLite has no date type: the planner's `CAST(? AS DATE)` would compare a number with the
+        // ISO text a date column actually holds, so a date filter is refused rather than wrong.
+        if kind == slickbi_connectors::DatabaseKind::Sqlite
+            && document
+                .fields
+                .iter()
+                .find(|field| field.id == filter.field)
+                .is_some_and(|field| {
+                    matches!(field.data_type, DataType::Date | DataType::Timestamp)
+                })
+        {
+            return Some(slickbi_connectors::LiveError::Unsupported {
+                kind: source,
+                construct: "a date filter",
+            });
+        }
+    }
+    None
 }
 
 fn database_source(
@@ -2185,6 +2375,76 @@ mod tests {
                 "{name}: a line series"
             );
         }
+    }
+
+    #[test]
+    fn a_live_sqlite_source_reflects_rows_inserted_behind_it() {
+        let path = temp("live.sqlite");
+        {
+            let connection = rusqlite::Connection::open(&path).expect("opens");
+            connection
+                .execute_batch(
+                    "CREATE TABLE sales (region TEXT, amount INTEGER);
+                     INSERT INTO sales VALUES ('EMEA', 10), ('APAC', 5), ('EMEA', 2);",
+                )
+                .expect("seeds");
+        }
+
+        let mut session = Session::new();
+        session
+            .connect_database(
+                slickbi_connectors::DatabaseKind::Sqlite,
+                path.to_str().expect("utf-8 path"),
+                None,
+                None,
+                "sales",
+            )
+            .expect("connects");
+        assert!(session.is_live());
+        session.assign(Shelf::X, &FieldId::new("region"));
+        session.assign(Shelf::Y, &FieldId::new("amount"));
+
+        let total = |session: &Session| -> f64 {
+            let scene = session
+                .scene()
+                .unwrap_or_else(|| panic!("scene: {:?}", session.error()));
+            scene
+                .tooltips
+                .iter()
+                .filter_map(|tip| {
+                    tip.text
+                        .lines()
+                        .find_map(|line| line.strip_prefix("amount: "))
+                })
+                .filter_map(|value| value.parse::<f64>().ok())
+                .sum()
+        };
+        assert_eq!(total(&session), 17.0);
+
+        {
+            let connection = rusqlite::Connection::open(&path).expect("opens");
+            connection
+                .execute("INSERT INTO sales VALUES ('EMEA', 100)", [])
+                .expect("inserts behind the session");
+        }
+        session.refresh();
+        assert_eq!(total(&session), 117.0, "the source is read again");
+
+        session
+            .add_calculated_field("Double", "[amount] * 2")
+            .expect("adds a calculation");
+        session.assign(Shelf::Y, &FieldId::new("Double"));
+        assert!(session.scene().is_none(), "a calculation is refused live");
+        assert!(
+            session
+                .error()
+                .unwrap_or_default()
+                .contains("calculated field"),
+            "the refusal names the reason: {:?}",
+            session.error()
+        );
+
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

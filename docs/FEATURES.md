@@ -39,7 +39,7 @@ that needs different data is a forked worksheet.
 | D12 | Microsoft SQL Server | F | 0.4.0 | planned |
 | D13 | HTTP and JSON API sources | F | 0.2.0 | planned |
 | D14 | Local extract to Parquet for any source | F | 0.0.3 | done |
-| D15 | Live query mode against the source | F | 0.0.3 | planned |
+| D15 | Live query mode against the source | F | 0.0.3 | done |
 | D16 | Relink a moved or renamed source | F | 0.1.0 | planned |
 | D17 | Refresh source schema and re-read | F | 0.1.0 | planned |
 | D18 | OpenDocument spreadsheets (`.ods`) with sheet selection | F | 0.0.3 | done |

@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 slickbi-engine.workspace = true
 slickbi-spec.workspace = true
+slickbi-calc.workspace = true
 thiserror.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
 postgres = "0.19"
@@ -18,4 +19,3 @@ iwork = "0.4"
 
 [dev-dependencies]
 arrow.workspace = true
-slickbi-calc.workspace = true

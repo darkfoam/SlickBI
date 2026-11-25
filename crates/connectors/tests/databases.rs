@@ -83,3 +83,56 @@ fn mysql_reads_a_table() {
         table.rows
     );
 }
+
+#[test]
+fn postgres_answers_a_live_query() {
+    let Ok(location) = std::env::var("SLICKBI_TEST_PG") else {
+        return;
+    };
+    let source = source(
+        DatabaseKind::Postgres,
+        location,
+        "SLICKBI_TEST_PG_USER",
+        "SLICKBI_TEST_PG_PASS",
+    );
+    let columns = vec![
+        ("x".to_owned(), slickbi_spec::DataType::Text),
+        ("y".to_owned(), slickbi_spec::DataType::Integer),
+    ];
+    let sql = "SELECT \"region\" AS \"x\", sum(\"amount\") AS \"y\" FROM \"sales\" \
+               GROUP BY 1 ORDER BY 1";
+    let result = slickbi_connectors::query_live(&source, sql, &[], &columns)
+        .expect("answers the live query");
+    assert_eq!(result.rows, 2);
+    let batch = &result.batches[0];
+    use slickbi_engine::arrow::array::{Array, StringArray};
+    let regions = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .expect("text");
+    assert_eq!(regions.len(), 2);
+    assert!(regions.iter().flatten().any(|region| region == "EMEA"));
+}
+
+#[test]
+fn mysql_answers_a_live_query() {
+    let Ok(location) = std::env::var("SLICKBI_TEST_MYSQL") else {
+        return;
+    };
+    let source = source(
+        DatabaseKind::MySql,
+        location,
+        "SLICKBI_TEST_MYSQL_USER",
+        "SLICKBI_TEST_MYSQL_PASS",
+    );
+    let columns = vec![
+        ("x".to_owned(), slickbi_spec::DataType::Text),
+        ("y".to_owned(), slickbi_spec::DataType::Integer),
+    ];
+    let sql = "SELECT \"region\" AS \"x\", sum(\"amount\") AS \"y\" FROM \"sales\" \
+               GROUP BY 1 ORDER BY 1";
+    let result = slickbi_connectors::query_live(&source, sql, &[], &columns)
+        .expect("answers the live query");
+    assert_eq!(result.rows, 2);
+}

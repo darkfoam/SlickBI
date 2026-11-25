@@ -21,10 +21,12 @@ use slickbi_spec::{
 use thiserror::Error;
 
 mod database;
+mod live;
 mod sheet;
 mod temporal;
 
 pub use database::{DatabaseKind, DatabaseSource, DatabaseTable, list_tables, read_database};
+pub use live::{LiveError, query as query_live};
 pub use sheet::{
     SheetTable, SpreadsheetKind, open_spreadsheet, read_spreadsheet, spreadsheet_sheets,
 };

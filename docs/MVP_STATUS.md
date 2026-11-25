@@ -30,7 +30,7 @@ A feature is not enough on its own. The MVP ships when **all four** are true:
 4. **Test obligations** — the §8 test requirements and the `TESTING.md` boundary map are met, and
    the §10 ship checklist is checked on all three platforms.
 
-At the snapshot, of the **51 MVP-scope features**: **47 done, 1 partial, 3 not started**.
+At the snapshot, of the **51 MVP-scope features**: **48 done, 0 partial, 3 not started**.
 
 ---
 
@@ -48,7 +48,7 @@ At the snapshot, of the **51 MVP-scope features**: **47 done, 1 partial, 3 not s
 | D06 | PostgreSQL | **Done** | Native `postgres` driver; verified against a real server | — |
 | D07 | MySQL / MariaDB | **Done** | Native `mysql` driver; verified against MariaDB | — |
 | D14 | Local extract to Parquet | **Done** | `Session::export_extract` + an Export menu item write the source table as Parquet | — |
-| D15 | Live query mode | **Partial** | File sources are queried live; database live mode is not implemented (depends on D06/D07) | L |
+| D15 | Live query mode | **Done** | Worksheet queries run on SQLite/PostgreSQL/MySQL while connected; calculations, overrides and a few operators are refused by type; snapshot is a connection choice | — |
 | D18 | OpenDocument spreadsheets + sheet selection | **Done** | `calamine` reads `.ods` through the same typed importer as Excel | — |
 | D19 | Apple Numbers documents + table selection | **Done** | `iwork` reads the first table, or the one the user picks | — |
 
@@ -217,7 +217,7 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [x] **D02 Excel** — `calamine` reads workbooks; sheet picker. **L**
 - [x] **D18 / D19 ODS and Numbers** — `calamine` and `iwork` feed the same typed importer. **M**
 - [x] **D14 extract to Parquet** — `Session::save` embeds one; an explicit Export action exists. **M**
-- [ ] **D15 live DB mode** — the design is in ADR 0002; the dialect-aware executor is not built. **L**
+- [x] **D15 live DB mode** — planned SQL on the native driver, Arrow conversion, typed refusals, live/snapshot choice. **L**
 - [ ] Credentials in the OS keychain — currently session-only, and never persisted. **M**
 
 ### Phase 6 — format, acceptance and release hardening
@@ -248,6 +248,6 @@ Each phase is independently shippable and leaves `cargo xtask ci` green.
 - [ ] No ignored tests, warnings, or TODOs without IDs
 - [ ] Tag `0.0.3` on `main`, merged back to `dev`
 
-The largest risks to the MVP are the remaining live database query mode (D15) and C03/R06. The
+The largest risks to the MVP are the remaining V12/R06/U08 scope and the acceptance-hardening work. The
 cheapest large wins are Phase 1 (finish visible, half-built surface) and Phase 6 (acceptance
 hardening: CSV parity, schema validation, report render parity, soak gate).

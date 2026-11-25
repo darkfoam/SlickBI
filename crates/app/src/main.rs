@@ -99,6 +99,7 @@ struct SlickBiApp {
     connect_table: String,
     connect_tables: Vec<String>,
     connect_error: Option<String>,
+    connect_live: bool,
     dark: bool,
 
     description_field: Option<FieldId>,
@@ -154,6 +155,7 @@ impl SlickBiApp {
             connect_table: String::new(),
             connect_tables: Vec::new(),
             connect_error: None,
+            connect_live: true,
             dark: false,
             description_field: None,
             description_text: String::new(),
@@ -427,7 +429,16 @@ impl SlickBiApp {
 
     fn data_pane(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
-        ui.label(egui::RichText::new("DATA").weak().small().strong());
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("DATA").weak().small().strong());
+            if self.session.is_live() {
+                ui.label(
+                    egui::RichText::new("live")
+                        .small()
+                        .color(egui::Color32::from_rgb(0x2E, 0x7D, 0x32)),
+                );
+            }
+        });
 
         let (dimensions, measures) = self.session.field_groups();
         if dimensions.is_empty() && measures.is_empty() {
@@ -1996,12 +2007,13 @@ impl SlickBiApp {
             return;
         }
         let (user, password) = self.connect_credentials();
-        match self.session.connect_database(
+        match self.session.connect_database_mode(
             self.connect_kind,
             &location,
             (!user.is_empty()).then_some(user.as_str()),
             (!password.is_empty()).then_some(password.as_str()),
             &table,
+            self.connect_live,
         ) {
             Ok(()) => self.close_connect(),
             Err(error) => self.connect_error = Some(error.to_string()),
@@ -2154,6 +2166,15 @@ impl SlickBiApp {
                     ui.add_space(4.0);
                     ui.colored_label(egui::Color32::from_rgb(0xB0, 0x30, 0x20), error);
                 }
+                ui.add_space(4.0);
+                ui.checkbox(&mut self.connect_live, "Query the source live");
+                ui.label(
+                    egui::RichText::new(
+                        "A calculation or a type override needs a snapshot (unchecked).",
+                    )
+                    .small()
+                    .weak(),
+                );
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Connect").clicked() {

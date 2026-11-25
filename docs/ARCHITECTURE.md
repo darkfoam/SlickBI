@@ -126,7 +126,11 @@ Excel, OpenDocument and Apple Numbers have no DuckDB scanner without an extensio
 sheet (or the sheet the user picks) is read through a native Rust parser, and the rows are
 registered as a typed table: numbers, text, booleans, real dates and timestamps. A formula cell
 contributes the value the spreadsheet stored beside the formula, which is the result the user sees.
-Database sources are read the same way through their native driver.
+Database sources are read the same way through their native driver. A database connection is
+**live** by default: the planned statement itself runs on the source, with each result column cast
+to text and parsed back into Arrow, and a construct the source cannot run (a calculation, a type
+override, an operator it lacks) is refused with a reason. Choosing a snapshot queries the imported
+copy instead; the copy is written either way so a save carries an extract.
 
 **Rendering a report**
 
